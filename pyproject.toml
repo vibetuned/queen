@@ -1,0 +1,69 @@
+[project]
+name = "queen"
+version = "0.1.0"
+description = "Expressive TTS and voice cloning on the isolated LTX-2.5 audio stream"
+readme = "README.md"
+authors = [
+    { name = "Pedro Fillastre", email = "osf@qlik.com" }
+]
+requires-python = "==3.12.*"
+dependencies = [
+    # Lightricks reference implementation: audio VAE, vocoder, AV transformer, Gemma 4 encoder, connectors.
+    "ltx-core",
+    # Staged building blocks (PromptEncoder, AudioConditioner, AudioDecoder, samplers) — same ones DramaBox composes.
+    "ltx-pipelines",
+    "torch==2.13.0",
+    "torchaudio",
+    "torchvision",
+    "huggingface-hub[hf-xet]>=1.0",
+    "safetensors>=0.5",
+    "soundfile>=0.12",
+    "peft>=0.14",
+    "accelerate>=1.2",
+    "bitsandbytes>=0.45",
+    "einops",
+    "numpy",
+    "tqdm",
+]
+
+[project.scripts]
+queen-extract = "queen.extract:main"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14",
+    "pytest>=9.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+# Only CUDA Linux hosts are supported; keeps the resolver from looking for darwin/aarch64 cu132 wheels.
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+# Mirrors upstream LTX-2: torch 2.13+cu132 pins a cuDNN wheel missing libcudnn_engines_tensor_ir,
+# which then resolves from the system and fails with CUDNN_STATUS_SUBLIBRARY_VERSION_MISMATCH.
+override-dependencies = ["nvidia-cudnn-cu13==9.24.0.43"]
+
+[tool.uv.sources]
+ltx-core = { git = "https://github.com/Lightricks/LTX-2", tag = "v1.5.0", subdirectory = "packages/ltx-core" }
+ltx-pipelines = { git = "https://github.com/Lightricks/LTX-2", tag = "v1.5.0", subdirectory = "packages/ltx-pipelines" }
+torch = { index = "pytorch-cu132" }
+torchvision = { index = "pytorch-cu132" }
+# torchaudio cu132 builds are only published on the test channel (same as upstream).
+torchaudio = { index = "pytorch-cu132-test" }
+
+[[tool.uv.index]]
+name = "pytorch-cu132"
+url = "https://download.pytorch.org/whl/cu132"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu132-test"
+url = "https://download.pytorch.org/whl/test/cu132/"
+explicit = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
