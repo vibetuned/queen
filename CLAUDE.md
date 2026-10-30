@@ -58,8 +58,11 @@ ranges instead (13 s, 0.7 GB RSS).
   large-v3-turbo WER 0.00, 0.00, 0.18 (the 0.18 is "forty"→"40" plus "lighthouse"→"life house").
   ~45 s per sample end-to-end on the g7 including model loads; peak host RSS 27 GB (Gemma load).
   Sample 1 peaks at 0 dBFS — watch for clipping.
-- Next: staged phases (`refs` / `ctx` / `denoise` / `decode`) with an audio-only ctx processor checked
-  against stock `PromptEncoder`; zero-shot in-context reference test; dataset prep; training.
+- 2026-10-30 — **Staged phases built** (`queen-stage`, `queen-eval`; `docs/staged.md`). Bit-identical to
+  stock T2A for a single item; ~5 s denoise per utterance with the DiT resident. Zero-shot in-context
+  reference on the base model: voice transfers (WavLM sim ~0.9–0.95 vs ~0.5–0.57 without ref) but the
+  model mostly stops reading the text (WER 1.00 / 0.92 in 2 of 3) — fine-tuning must fix this.
+- Next: dataset prep (reuse `refs` / `ctx` phases to cache VAE latents and text features), then training.
 
 ## Memory budget (why staged)
 

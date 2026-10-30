@@ -17,21 +17,14 @@ from pathlib import Path
 
 from ltx_core.model.transformer import LTXV_AUDIO_ONLY_MODEL_COMFY_RENAMING_MAP
 
+from queen.safetensors_io import read_header, tensor_nbytes
+
 AUDIO_CONNECTOR_PREFIX = "model.diffusion_model.audio_embeddings_connector."
 # EmbeddingsProcessorConfigurator always builds the video connector, so the stock PromptEncoder
 # needs it in the transformer file. Drop it once text encoding uses an audio-only processor.
 VIDEO_CONNECTOR_PREFIX = "model.diffusion_model.video_embeddings_connector."
 
 _COPY_CHUNK = 64 * 1024 * 1024
-_DTYPE_BYTES = {"BF16": 2, "F16": 2, "F32": 4, "F64": 8, "I64": 8, "I32": 4, "I16": 2, "I8": 1, "U8": 1, "BOOL": 1}
-
-
-def read_header(path: Path) -> tuple[dict, int]:
-    """Return (header dict, absolute offset where tensor data starts)."""
-    with path.open("rb") as f:
-        (header_len,) = struct.unpack("<Q", f.read(8))
-        header = json.loads(f.read(header_len))
-    return header, 8 + header_len
 
 
 def is_audio_key(key: str, keep_video_connector: bool) -> bool:
@@ -54,7 +47,7 @@ def extract(src: Path, dst: Path, keep_video_connector: bool = True) -> dict[str
     for key in kept:
         info = header[key]
         begin, end = info["data_offsets"]
-        expected = math.prod(info["shape"]) * _DTYPE_BYTES[info["dtype"]]
+        expected = tensor_nbytes(info)
         if end - begin != expected:
             raise ValueError(f"{key}: {end - begin} bytes on disk, expected {expected} from dtype/shape")
         out_header[key] = {"dtype": info["dtype"], "shape": info["shape"], "data_offsets": [offset, offset + expected]}
