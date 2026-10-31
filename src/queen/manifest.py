@@ -38,6 +38,9 @@ SOURCES = {
         ("ltx-2-community", "cc-by-nc-4.0"), True, True, True, "DramaBox renders of DeepDialogue text"
     ),
     "commonvoice": SourcePolicy(("cc0-1.0",), False, True, True, "Common Voice clips (lnvox voicebank)"),
+    "ltxself": SourcePolicy(
+        ("ltx-2-community", "cc-by-nc-4.0"), True, True, True, "LTX-2.5 long takes of DeepDialogue text, split"
+    ),
     "emovdb": SourcePolicy(("emov-db-noncommercial",), False, True, True, "cite Adigwe et al. 2018"),
     "iemocap": SourcePolicy(("iemocap-research",), False, True, False, "releasing weights needs USC permission"),
     "ravdess": SourcePolicy(("cc-by-nc-sa-4.0",), False, False, False, "eval only: ShareAlike vs LTX-2 license"),
@@ -324,7 +327,7 @@ def read_manifest(root: Path) -> tuple[list[Clip], list[Pair]]:
 
 
 def _cmd_build(args: argparse.Namespace) -> None:
-    from queen.sources import emovdb, iemocap, ravdess, renders, voicebank
+    from queen.sources import emovdb, iemocap, ltxself, ravdess, renders, voicebank
 
     clips: list[Clip] = []
     if args.voicebank:
@@ -344,6 +347,8 @@ def _cmd_build(args: argparse.Namespace) -> None:
         clips += ravdess.load(args.ravdess)
     if args.iemocap:
         clips += iemocap.load(args.iemocap)
+    for root in args.ltxself or ():
+        clips += ltxself.load(root)
 
     args.out.mkdir(parents=True, exist_ok=True)
     if args.qc:
@@ -357,7 +362,7 @@ def _cmd_build(args: argparse.Namespace) -> None:
     validate(clips, pairs)
     write_jsonl(args.out / "clips.jsonl", clips)
     write_jsonl(args.out / "pairs.jsonl", pairs)
-    build = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items() if k != "fn"}
+    build = json.loads(json.dumps({k: v for k, v in vars(args).items() if k != "fn"}, default=str))
     summary = stats(clips, pairs)
     (args.out / "build.json").write_text(json.dumps({"args": build, "stats": summary}, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=1))
@@ -383,6 +388,7 @@ def main() -> None:
     b.add_argument("--arctic", type=Path, default=Path("/data/datasets/cmu_arctic/cmuarctic.data"))
     b.add_argument("--ravdess", type=Path, help="dir of extracted Audio_Speech_Actors_01-24 (Actor_XX/)")
     b.add_argument("--iemocap", type=Path, help="dir holding hf/data/*.parquet from AbstractTTS/IEMOCAP")
+    b.add_argument("--ltxself", type=Path, action="append", help="queen-selfgen output dir (segments.jsonl)")
     b.add_argument("--val-frac", type=float, default=0.03)
     b.add_argument("--test-frac", type=float, default=0.03)
     b.add_argument("--refs-per-target", type=int, default=1)

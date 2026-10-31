@@ -93,8 +93,12 @@ ranges instead (13 s, 0.7 GB RSS).
   243,279 lines, 9 h. Non-joy lines total only ~84 h of speech (anger 4.5 h, disgust 2 h) — table in
   `docs/directions.md`. Archives for S3 (`scripts/archive_data.sh`, restore steps in `docs/setup.md`):
   `/data/archives/{datasets,manifests-real-v1,directions-deepdialogue-v1}.tar.zst`.
-- Next: render plan from the directions (DramaBox via lnvox comfy; LTX self-gen takes from
-  multi-sentence turns), voice descriptors for LTX takes, training loop.
+- 2026-10-31 — **LTX self-gen dataset v1 started** (`queen-selfgen`, `docs/ltx-selfgen.md`): 3,500 takes,
+  500 per director emotion (joy is not oversampled), one per dialogue, random lnvox-style voice
+  descriptors → `/data/selfgen/ltxself-v1` → manifest `/data/manifests/mix-v1` (real-v1 sources +
+  `ltxself`, real-v1 QC and cache reused). Chain log: `/data/logs/selfgen-v1.log` (~7 h on the g7).
+- Next: training loop on mix-v1 (LoRA on the g7, then full fine-tune on a g7e); DramaBox render plan
+  with an emotion-balanced selection (not 404 h of joy); batched denoise for large self-gen runs.
 
 ## Data licensing constraints (checked 2026-10-30)
 

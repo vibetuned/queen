@@ -36,6 +36,7 @@ queen-eval = "queen.eval:main"
 queen-manifest = "queen.manifest:main"
 queen-cache = "queen.cache:main"
 queen-direct = "queen.directions:main"
+queen-selfgen = "queen.selfgen:main"
 
 [dependency-groups]
 dev = [

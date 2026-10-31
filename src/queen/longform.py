@@ -20,6 +20,26 @@ def split_sentences(text: str) -> list[str]:
     return [s.strip() for s in _SENTENCE_RE.findall(text) if s.strip(" \"'”’)]")]
 
 
+def group_sentences(sentences: Sequence[str], min_words: int = 3) -> list[str]:
+    """Merge sentences shorter than ``min_words`` into the next one (the last into the previous), so
+    every segment is long enough to align and to train on ("Wow! That's huge." stays one segment)."""
+    groups: list[str] = []
+    carry = ""
+    for s in sentences:
+        s = f"{carry} {s}".strip()
+        if len(s.split()) < min_words:
+            carry = s
+            continue
+        groups.append(s)
+        carry = ""
+    if carry:
+        if groups:
+            groups[-1] = f"{groups[-1]} {carry}"
+        else:
+            groups.append(carry)
+    return groups
+
+
 def sentence_cuts(
     words: Sequence[dict],
     sentences: Sequence[str],

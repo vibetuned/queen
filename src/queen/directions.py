@@ -55,6 +55,16 @@ def clean_spoken(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+# DeepDialogue generator leaks (~1k of 243k lines): speaker labels in the text ("Thanks, LLM1!"),
+# "Current emotion: relaxed.", unfilled "[Band Name]" placeholders, "Answer in a natural way.", "As an AI".
+_LEAK = re.compile(r"\bLLM\d\b|\bemotion:|\[[^\]]*\]|answer in a natural way|\bas an ai\b", re.IGNORECASE)
+
+
+def leaked_prompt(text: str) -> bool:
+    """A DeepDialogue line that carries text from its generator's prompt rather than dialogue."""
+    return bool(_LEAK.search(text))
+
+
 def dialogue_id(model_dir: str, conversation_id: str) -> str:
     # conversation ids repeat across DeepDialogue's 16 generator configs
     return f"{model_dir.removeprefix('dialogues_')}-{conversation_id}"

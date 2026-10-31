@@ -36,3 +36,13 @@ def test_cuts_give_up_when_a_boundary_word_is_missing() -> None:
     sentences = ["I was home.", "Then it rang."]
     words = _words(("I", 0.1, 0.2), ("was", 0.2, 0.4), ("Then", 1.3, 1.5), ("it", 1.5, 1.6), ("rang.", 1.6, 2.0))
     assert sentence_cuts(words, sentences, _normalize, 2.4) is None
+
+
+def test_group_sentences_merges_short_ones() -> None:
+    from queen.longform import group_sentences
+
+    assert group_sentences(["Wow!", "That is huge.", "Really?", "Yes, it is."]) == [
+        "Wow! That is huge.", "Really? Yes, it is."
+    ]  # fmt: skip
+    assert group_sentences(["I love this place.", "Me too!"]) == ["I love this place. Me too!"]
+    assert group_sentences(["Hi."]) == ["Hi."]

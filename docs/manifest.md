@@ -98,6 +98,7 @@ The lnvox comfy pipeline writes one JSON object per DramaBox render to a JSONL f
 | Source | Adapter | Status |
 |---|---|---|
 | DramaBox renders | `queen.sources.renders` | contract above; waiting for lnvox output |
+| LTX self-generation | `queen.sources.ltxself` | `queen-selfgen` output (`docs/ltx-selfgen.md`); `--ltxself DIR`, repeatable |
 | lnvox voicebank (Common Voice) | `queen.sources.voicebank` | ready; needs the voicebank dir |
 | EmoV-DB | `queen.sources.emovdb` | built from `/data/datasets/emovdb` |
 | RAVDESS (eval only) | `queen.sources.ravdess` | built from `/data/datasets/ravdess` |

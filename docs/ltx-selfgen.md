@@ -48,3 +48,33 @@ GPU-hour on the g7 (plus one Gemma prompt per take and per training segment, ~0.
   sentence moved, give same-voice cross-emotion pairs.
 - **Later, bootstrap:** once a fine-tune follows text with a reference, condition new emotional takes on a
   neutral segment of an earlier take to get cross-take, cross-emotion pairs for the same voice.
+
+## Dataset (`queen-selfgen`)
+
+```bash
+uv run queen-selfgen plan /data/selfgen/ltxself-v1 --per-emotion 500         # takes.jsonl + items.jsonl
+uv run queen-stage plan /data/selfgen/ltxself-v1/items.jsonl /data/selfgen/ltxself-v1/run
+uv run queen-stage run /data/selfgen/ltxself-v1/run                           # ctx, denoise, decode
+uv run queen-selfgen split /data/selfgen/ltxself-v1                           # segments/ + segments.jsonl
+uv run queen-manifest build /data/manifests/mix-v1 ... --ltxself /data/selfgen/ltxself-v1 --qc
+```
+
+- **Selection** (`select_takes`): turns from the direction pass (`docs/directions.md`) with 2–6 sentences
+  after merging sentences under 3 words into a neighbour (`longform.group_sentences`), 12–60 words, a
+  clean English cue, no abbreviation/decimal the splitter would cut inside, no DeepDialogue prompt leak
+  (`directions.leaked_prompt`). Up to `--per-emotion` takes per emotion, at most one take per dialogue
+  (rarest emotion picks first), unused cues preferred — v1: 500 × 7 = 3,500 takes, 3,050 distinct cues,
+  ~6 h of speech.
+- **Voice**: `voice_descriptor` draws age band, accent (60 %), gender and timbre from a fixed grid, keyed
+  by the take id; the seed is keyed the same way, so a re-plan reproduces every take.
+- **Prompt**: lnvox format, `(<descriptor> - <emotion adjective> - <cue>) "<turn>"`, e.g.
+  `(middle-aged - british - male - husky voice - fearful - hushed - uneasy) "I know, right? ..."`. Each
+  segment's prompt is the same direction with only its own sentence(s).
+- **Split** (resumable, `<out>/split/<take>.json` per take): drop the take if Whisper WER > 0.2 or a
+  boundary is not recognized; drop segments under 1 s and segments whose leave-one-out WavLM similarity to
+  the rest of the take is < 0.75; keep the take if ≥ 2 segments survive. Segments are cut from the 48 kHz
+  decode. The manifest's `--qc` then checks every segment against its own text (synthetic WER ≤ 0.2).
+- **Manifest**: source `ltxself` (LTX-2 Community License + DeepDialogue CC BY-NC 4.0, releasable), one
+  speaker per take (`ltxself:<take id>`), so all its pairs are `same`-emotion pairs inside the take.
+- 14-take dry run: all takes kept, 31 segments, alignment exact. It also exposed DeepDialogue leaks
+  ("Answer in a natural way." spoken as dialogue) → the `leaked_prompt` filter.

@@ -57,3 +57,13 @@ def test_direct_uses_lnvox_template_and_marks_missing_lines() -> None:
         ("joy", "bright, teasing", "Hi"), (None, None, "Hey."), ("anger", "", "Stop it!")
     ]  # fmt: skip
     assert out["missing"] == 1 and "turns" not in out
+
+
+def test_leaked_prompt() -> None:
+    assert directions.leaked_prompt("Thanks, LLM1! So glad.") and directions.leaked_prompt(
+        "Fun! Current emotion: relaxed."
+    )
+    assert directions.leaked_prompt("I saw [Band Name] live.") and directions.leaked_prompt(
+        "What now? Answer in a natural way."
+    )
+    assert not directions.leaked_prompt("Keep it up! A new language model came out, in character too.")
