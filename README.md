@@ -7,6 +7,9 @@ in-context on clean reference speech latents (DramaBox-style).
 - Project context, decisions, and memory budget: [CLAUDE.md](CLAUDE.md)
 - Checkpoint anatomy: [docs/ltx25-anatomy.md](docs/ltx25-anatomy.md)
 - How DramaBox's staged inference works: [docs/dramabox-reference.md](docs/dramabox-reference.md)
+- Staged inference here: [docs/staged.md](docs/staged.md); training manifest + caching: [docs/manifest.md](docs/manifest.md)
+- LLM direction pass (lnvox director on DeepDialogue): [docs/directions.md](docs/directions.md)
+- LTX self-generated long takes split into sentence pairs: [docs/ltx-selfgen.md](docs/ltx-selfgen.md)
 
 ```bash
 uv sync

@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 import torch
 
+from queen.audio import prepare_waveform
 from queen.staged import (
     Params,
     Paths,
@@ -14,7 +15,6 @@ from queen.staged import (
     pending_decode,
     pending_denoise,
     pending_refs,
-    prepare_reference,
     ref_file,
     save_tensors,
     wav_file,
@@ -87,9 +87,9 @@ def test_pending_work_follows_files_on_disk(tmp_path: Path, ref_clip: Path) -> N
     assert not list((root / "latents").glob("*.tmp"))
 
 
-def test_prepare_reference_makes_stereo_and_normalizes_peak() -> None:
+def test_prepare_waveform_makes_stereo_and_normalizes_peak() -> None:
     mono = torch.tensor([[[0.1, -0.5, 0.25]]])
-    out = prepare_reference(mono, peak_db=-6.0)
+    out = prepare_waveform(mono, peak_db=-6.0)
     assert out.shape == (1, 2, 3)
     torch.testing.assert_close(out.abs().max(), torch.tensor(10 ** (-6 / 20)))
     torch.testing.assert_close(out[0, 0], out[0, 1])

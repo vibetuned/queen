@@ -55,7 +55,19 @@ class Evaluator:
         self.sv = WavLMForXVector.from_pretrained(SV_MODEL).to(device).eval()
 
     def transcribe(self, audio: torch.Tensor) -> str:
-        return self.asr({"raw": audio.numpy(), "sampling_rate": SR}, generate_kwargs={"language": "en"})["text"].strip()
+        return self.transcribe_batch([audio])[0]
+
+    def transcribe_batch(self, audios: list[torch.Tensor], batch_size: int = 16) -> list[str]:
+        inputs = [{"raw": a.numpy(), "sampling_rate": SR} for a in audios]
+        # chunk_length_s: Whisper's window is 30 s; longer clips (some IEMOCAP turns) are chunked.
+        outputs = self.asr(inputs, batch_size=batch_size, chunk_length_s=30, generate_kwargs={"language": "en"})
+        return [o["text"].strip() for o in outputs]
+
+    def words(self, audio: torch.Tensor) -> list[dict]:
+        """Whisper word chunks ``{"text", "timestamp": (start, end)}`` for one clip (≤ 30 s)."""
+        out = self.asr({"raw": audio.numpy(), "sampling_rate": SR}, return_timestamps="word",
+                       generate_kwargs={"language": "en"})  # fmt: skip
+        return out["chunks"]
 
     def normalize(self, text: str) -> list[str]:
         return self.asr.tokenizer.normalize(text).split()

@@ -211,40 +211,14 @@ PENDING = {"refs": pending_refs, "ctx": pending_ctx, "denoise": pending_denoise,
 # ----- phase: refs -------------------------------------------------------------
 
 
-def prepare_reference(waveform: torch.Tensor, peak_db: float) -> torch.Tensor:
-    """``[1, C, S]`` -> stereo ``[1, 2, S]`` (the audio VAE is stereo), peak-normalized to ``peak_db``."""
-    if waveform.shape[1] == 1:
-        waveform = waveform.repeat(1, 2, 1)
-    elif waveform.shape[1] > 2:
-        waveform = waveform.mean(dim=1, keepdim=True).repeat(1, 2, 1)
-    peak = waveform.abs().max()
-    return waveform * (10 ** (peak_db / 20) / peak) if peak > 0 else waveform
-
-
 def phase_refs(plan: Plan, root: Path, device: torch.device) -> None:
-    from ltx_core.loader import DummyRegistry
-    from ltx_core.loader.single_gpu_model_builder import SingleGPUModelBuilder as Builder
-    from ltx_core.model.audio_vae import AUDIO_VAE_ENCODER_COMFY_KEYS_FILTER, AudioEncoderConfigurator, encode_audio
-    from ltx_core.types import Audio
-    from ltx_pipelines.utils.gpu_model import gpu_model
-    from ltx_pipelines.utils.media_io import decode_audio_from_file
+    from queen.audio import audio_encoder
 
     todo = pending_refs(plan, root)
-    builder = Builder(
-        model_path=plan.paths.audio_vae,
-        model_class_configurator=AudioEncoderConfigurator,
-        model_sd_ops=AUDIO_VAE_ENCODER_COMFY_KEYS_FILTER,
-        registry=DummyRegistry(),
-    )
-    with gpu_model(build_checked(builder, device)) as encoder:
+    with audio_encoder(plan.paths.audio_vae, device, plan.params.ref_peak_db) as encode:
         for n, (key, path) in enumerate(todo.items(), 1):
-            audio = decode_audio_from_file(path, device, 0.0, plan.params.ref_seconds)
-            if audio is None:
-                raise RuntimeError(f"no audio stream in {path}")
-            waveform = prepare_reference(audio.waveform.float(), plan.params.ref_peak_db)
-            latent = encode_audio(Audio(waveform=waveform, sampling_rate=audio.sampling_rate), encoder)
+            latent, seconds = encode(path, plan.params.ref_seconds)
             save_tensors(ref_file(root, key), {"latent": latent})
-            seconds = waveform.shape[-1] / audio.sampling_rate
             print(f"[refs] {n}/{len(todo)} {Path(path).name} {seconds:.1f}s -> {tuple(latent.shape)}", flush=True)
 
 

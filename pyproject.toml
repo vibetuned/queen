@@ -18,6 +18,9 @@ dependencies = [
     "huggingface-hub[hf-xet]>=1.0",
     "safetensors>=0.5",
     "soundfile>=0.12",
+    "pyarrow>=17",
+    # vibetuned/ln-vox (comfy branch): director prompts, LLM client, schemas for the direction pass.
+    "lnvox",
     "peft>=0.14",
     "accelerate>=1.2",
     "bitsandbytes>=0.45",
@@ -30,6 +33,9 @@ dependencies = [
 queen-extract = "queen.extract:main"
 queen-stage = "queen.staged:main"
 queen-eval = "queen.eval:main"
+queen-manifest = "queen.manifest:main"
+queen-cache = "queen.cache:main"
+queen-direct = "queen.directions:main"
 
 [dependency-groups]
 dev = [
@@ -47,10 +53,14 @@ environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 # Mirrors upstream LTX-2: torch 2.13+cu132 pins a cuDNN wheel missing libcudnn_engines_tensor_ir,
 # which then resolves from the system and fails with CUDNN_STATUS_SUBLIBRARY_VERSION_MISMATCH.
 override-dependencies = ["nvidia-cudnn-cu13==9.24.0.43"]
+# lnvox force-includes its prompts dir, which its `packages` entry already ships; hatchling >= 1.29
+# rejects the duplicate wheel entry (lnvox's own editable install never builds a wheel).
+build-constraint-dependencies = ["hatchling<1.29"]
 
 [tool.uv.sources]
 ltx-core = { git = "https://github.com/Lightricks/LTX-2", tag = "v1.5.0", subdirectory = "packages/ltx-core" }
 ltx-pipelines = { git = "https://github.com/Lightricks/LTX-2", tag = "v1.5.0", subdirectory = "packages/ltx-pipelines" }
+lnvox = { git = "https://github.com/vibetuned/ln-vox", rev = "a67c2f0843e2c145351e4a5f093f5b3ed8bcd305" }
 torch = { index = "pytorch-cu132" }
 torchvision = { index = "pytorch-cu132" }
 # torchaudio cu132 builds are only published on the test channel (same as upstream).
