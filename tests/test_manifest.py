@@ -99,8 +99,11 @@ def test_apply_qc_uses_source_specific_thresholds() -> None:
         _clip("synth_ok", "vb:x", source="dramabox"),
         _clip("synth_bad", "vb:x", source="dramabox"),
         _clip("unchecked", "s:a"),
+        _clip("ref_only", "vb:x", source="commonvoice"),
     ]
-    qc = {"real_ok": {"wer": 0.4}, "real_bad": {"wer": 0.9}, "synth_ok": {"wer": 0.1}, "synth_bad": {"wer": 0.4}}
+    clips[-1].prompt = None
+    qc = {"real_ok": {"wer": 0.4}, "real_bad": {"wer": 0.9}, "synth_ok": {"wer": 0.1}, "synth_bad": {"wer": 0.4},
+          "ref_only": {"wer": 0.6}}  # fmt: skip
     kept = apply_qc(clips, qc, max_wer_real=0.5, max_wer_synthetic=0.2)
-    assert [c.id for c in kept] == ["real_ok", "synth_ok", "unchecked"]
+    assert [c.id for c in kept] == ["real_ok", "synth_ok", "unchecked", "ref_only"]
     assert kept[0].meta["qc_wer"] == 0.4

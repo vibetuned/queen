@@ -292,13 +292,15 @@ def apply_qc(clips: list[Clip], qc: dict[str, dict], max_wer_real: float, max_we
 
     Real speech gets a loose threshold (laughing or sleepy delivery legitimately raises WER; the check
     targets wrong transcripts), synthetic renders a strict one (teacher babble must not be learned).
+    Reference-only clips (no prompt) with a transcript are kept whatever their WER: they are never
+    targets, and the lnvox voicebank lists only some of the utterances in each clip (WER 0.3-0.5).
     """
     kept = []
     for c in clips:
         if c.id in qc:
             c.meta["qc_wer"] = qc[c.id]["wer"]
             limit = max_wer_synthetic if SOURCES[c.source].synthetic else max_wer_real
-            if qc[c.id]["wer"] > limit:
+            if qc[c.id]["wer"] > limit and not (c.prompt is None and c.transcript):
                 continue
         kept.append(c)
     return kept

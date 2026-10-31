@@ -39,5 +39,8 @@ Tested on AWS g7 (RTX PRO 4500 Blackwell 32 GB, driver 595, CUDA 13.2). Same ste
    # restore: aws s3 cp ... /data/archives/ --recursive, then per archive
    sha256sum -c NAME.tar.zst.sha256 && tar -I zstd -xf NAME.tar.zst -C /data
    ```
-   Not worth archiving: checkpoints (re-download; `queen-base` is a single file anyway), `vendor/`,
+   Also `selfgen/ltxself-v1` (segments + takes) and `dramabox/dd-v1` (`lnvox/artifacts` + plan/renders)
+   once their runs finish. Not worth archiving: checkpoints (re-download; `queen-base` is a single file anyway), `vendor/`,
    `hf-cache/`. Keep the bucket private (IEMOCAP: internal research only).
+8. Optional — DramaBox renders (`docs/dramabox-renders.md`): lnvox checkout + its own env with DramaBox
+   in `/data/vendor/lnvox`, voicebank in `/data/voices`; run renders with `HF_HOME=/data/hf-cache`.

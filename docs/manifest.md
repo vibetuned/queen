@@ -97,9 +97,9 @@ The lnvox comfy pipeline writes one JSON object per DramaBox render to a JSONL f
 
 | Source | Adapter | Status |
 |---|---|---|
-| DramaBox renders | `queen.sources.renders` | contract above; waiting for lnvox output |
+| DramaBox renders | `queen.sources.renders` | `queen-render` via lnvox's staged s4 (`docs/dramabox-renders.md`) |
 | LTX self-generation | `queen.sources.ltxself` | `queen-selfgen` output (`docs/ltx-selfgen.md`); `--ltxself DIR`, repeatable |
-| lnvox voicebank (Common Voice) | `queen.sources.voicebank` | ready; needs the voicebank dir |
+| lnvox voicebank (Common Voice) | `queen.sources.voicebank` | `/data/voices/voicebank-demo` (800 CC0 voices); reference-only |
 | EmoV-DB | `queen.sources.emovdb` | built from `/data/datasets/emovdb` |
 | RAVDESS (eval only) | `queen.sources.ravdess` | built from `/data/datasets/ravdess` |
 | IEMOCAP (HF mirror `AbstractTTS/IEMOCAP`) | `queen.sources.iemocap` | built from `/data/datasets/iemocap`; Session 5 → `test`; still file the USC release form (the mirror has no license of its own) |

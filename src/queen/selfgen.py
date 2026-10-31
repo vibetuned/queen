@@ -90,22 +90,35 @@ def select_takes(directions: Path, per_emotion: int, seed: int = 0) -> list[dict
             if (c := candidate(d, line)) is not None:
                 by_emotion[c["emotion"]].append(c)
 
+    return pick_balanced(by_emotion, per_emotion, seed)
+
+
+def pick_balanced(
+    by_emotion: dict[str, list[dict]], per_emotion: int, seed: int = 0, reuse_dialogues: bool = False
+) -> list[dict]:
+    """Up to ``per_emotion`` candidates (dicts with ``emotion``, ``cue``, ``dialogue``, ``id``) per emotion:
+    unused cues first, at most one per dialogue (then, with ``reuse_dialogues``, any dialogue)."""
     used_dialogues: set[str] = set()
     chosen: list[dict] = []
     # rarest emotion first, so the few disgust/anger lines are not lost to a joy take of the same dialogue
     for emotion in sorted(by_emotion, key=lambda e: len(by_emotion[e])):
-        pool = by_emotion[emotion]
+        pool = list(by_emotion[emotion])
         random.Random(f"{seed}:{emotion}").shuffle(pool)
         picked: list[dict] = []
+        picked_ids: set[str] = set()
         used_cues: set[str] = set()
-        for fresh_cue_only in (True, False):
+        passes = ((True, True), (True, False)) + (((False, False),) if reuse_dialogues else ())
+        for fresh_dialogue_only, fresh_cue_only in passes:
             for c in pool:
                 if len(picked) == per_emotion:
                     break
                 cue = c["cue"].lower()
-                if c["dialogue"] in used_dialogues or (fresh_cue_only and cue in used_cues):
+                if c["id"] in picked_ids or (fresh_dialogue_only and c["dialogue"] in used_dialogues):
+                    continue
+                if fresh_cue_only and cue in used_cues:
                     continue
                 picked.append(c)
+                picked_ids.add(c["id"])
                 used_dialogues.add(c["dialogue"])
                 used_cues.add(cue)
         chosen += picked

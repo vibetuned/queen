@@ -93,12 +93,18 @@ ranges instead (13 s, 0.7 GB RSS).
   243,279 lines, 9 h. Non-joy lines total only ~84 h of speech (anger 4.5 h, disgust 2 h) — table in
   `docs/directions.md`. Archives for S3 (`scripts/archive_data.sh`, restore steps in `docs/setup.md`):
   `/data/archives/{datasets,manifests-real-v1,directions-deepdialogue-v1}.tar.zst`.
-- 2026-10-31 — **LTX self-gen dataset v1 started** (`queen-selfgen`, `docs/ltx-selfgen.md`): 3,500 takes,
-  500 per director emotion (joy is not oversampled), one per dialogue, random lnvox-style voice
-  descriptors → `/data/selfgen/ltxself-v1` → manifest `/data/manifests/mix-v1` (real-v1 sources +
-  `ltxself`, real-v1 QC and cache reused). Chain log: `/data/logs/selfgen-v1.log` (~7 h on the g7).
-- Next: training loop on mix-v1 (LoRA on the g7, then full fine-tune on a g7e); DramaBox render plan
-  with an emotion-balanced selection (not 404 h of joy); batched denoise for large self-gen runs.
+- 2026-10-31 — **LTX self-gen dataset v1 done** (`queen-selfgen`, `docs/ltx-selfgen.md`): 3,500 takes,
+  500 per director emotion, random lnvox-style voice descriptors; 3,326 takes kept (98 alignment, 49 too
+  short, 18 voice drift, 9 WER) → 7,825 segments / 6.6 h; manifest QC dropped 91 more.
+  `/data/manifests/mix-v1` = real-v1 sources + `ltxself`: train 20,383 pairs (23.7 h of targets, 69 %
+  real), ltxself 6.1 h / 3,120 voices in train. ~9 h end to end on the g7 (denoise 4.4 h, split 2 h).
+- 2026-10-31 — **DramaBox renders started** (`queen-render` + `scripts/lnvox_render.py`,
+  `docs/dramabox-renders.md`): lnvox's staged s4 in lnvox's own env (`/data/vendor/lnvox/.venv`, torch
+  2.8). Test: WER 0.003, voice similarity 0.965 to its own voicebank clip vs 0.650 to others. dd-v1 =
+  3,500 balanced lines × 2 of the 800 voicebank voices = 7,000 renders → `/data/manifests/mix-v2`
+  (mix-v1 + voicebank + renders). Chain log `/data/logs/dramabox-v1.log`, ~11 h.
+- Next: training loop on mix-v1 / mix-v2 (LoRA on the g7, then full fine-tune on a g7e); batched denoise
+  for large self-gen runs.
 
 ## Data licensing constraints (checked 2026-10-30)
 

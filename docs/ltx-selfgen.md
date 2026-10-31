@@ -74,6 +74,9 @@ uv run queen-manifest build /data/manifests/mix-v1 ... --ltxself /data/selfgen/l
   boundary is not recognized; drop segments under 1 s and segments whose leave-one-out WavLM similarity to
   the rest of the take is < 0.75; keep the take if ≥ 2 segments survive. Segments are cut from the 48 kHz
   decode. The manifest's `--qc` then checks every segment against its own text (synthetic WER ≤ 0.2).
+- **Cost on the g7 for 3,500 takes**: ctx 22 min, denoise 4.4 h (4.9 s per take), decode 10 min, split
+  ~2 h (~2 s per take: Whisper word timestamps need eager attention with attention weights, and batching
+  them is no faster — batch 4 same speed, batch 8 out of memory), manifest QC + cache ~1 h.
 - **Manifest**: source `ltxself` (LTX-2 Community License + DeepDialogue CC BY-NC 4.0, releasable), one
   speaker per take (`ltxself:<take id>`), so all its pairs are `same`-emotion pairs inside the take.
 - 14-take dry run: all takes kept, 31 segments, alignment exact. It also exposed DeepDialogue leaks

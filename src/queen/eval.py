@@ -64,7 +64,11 @@ class Evaluator:
         return [o["text"].strip() for o in outputs]
 
     def words(self, audio: torch.Tensor) -> list[dict]:
-        """Whisper word chunks ``{"text", "timestamp": (start, end)}`` for one clip (≤ 30 s)."""
+        """Whisper word chunks ``{"text", "timestamp": (start, end)}`` for one clip (≤ 30 s).
+
+        Not batched: word timestamps need eager attention with attention weights, so a batch of 4 is no
+        faster per clip (~2 s per 10 s take on the g7) and a batch of 8 runs out of memory.
+        """
         out = self.asr({"raw": audio.numpy(), "sampling_rate": SR}, return_timestamps="word",
                        generate_kwargs={"language": "en"})  # fmt: skip
         return out["chunks"]

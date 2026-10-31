@@ -37,6 +37,7 @@ queen-manifest = "queen.manifest:main"
 queen-cache = "queen.cache:main"
 queen-direct = "queen.directions:main"
 queen-selfgen = "queen.selfgen:main"
+queen-render = "queen.render:main"
 
 [dependency-groups]
 dev = [
