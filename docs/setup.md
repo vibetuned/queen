@@ -32,15 +32,22 @@ Tested on AWS g7 (RTX PRO 4500 Blackwell 32 GB, driver 595, CUDA 13.2). Same ste
    each with `scripts/archive_data.sh` (S3 copes far better with a few large objects than with the ~90k
    small files under `datasets/`, `manifests/*/cache/`, `directions/`), then copy `/data/archives` to S3:
    ```bash
-   scripts/archive_data.sh manifests-real-v1 manifests/real-v1 manifests/real-v1.{build,cache}.log
    scripts/archive_data.sh datasets --exclude=datasets/emovdb/archives --exclude='datasets/ravdess/*.zip' datasets
    scripts/archive_data.sh directions-deepdialogue-v1 directions/deepdialogue-v1
+   scripts/archive_data.sh voices-voicebank-demo voices/voicebank-demo
+   scripts/archive_data.sh selfgen-ltxself-v1 selfgen/ltxself-v1
+   scripts/archive_data.sh dramabox-dd-v1 --exclude=dramabox/dd-v1/lnvox/cache dramabox/dd-v1
+   # all manifests in one archive: their caches are hardlinked to each other, and tar keeps hardlinks
+   # within an archive (stored once, restored as links)
+   scripts/archive_data.sh manifests-mix-v2 manifests/real-v1 manifests/real-v1.{build,cache}.log \
+       manifests/mix-v1 manifests/mix-v2
    aws s3 cp /data/archives/ s3://<bucket>/queen/archives/ --recursive
    # restore: aws s3 cp ... /data/archives/ --recursive, then per archive
    sha256sum -c NAME.tar.zst.sha256 && tar -I zstd -xf NAME.tar.zst -C /data
    ```
-   Also `selfgen/ltxself-v1` (segments + takes) and `dramabox/dd-v1` (`lnvox/artifacts` + plan/renders)
-   once their runs finish. Not worth archiving: checkpoints (re-download; `queen-base` is a single file anyway), `vendor/`,
-   `hf-cache/`. Keep the bucket private (IEMOCAP: internal research only).
+   Manifests and caches use absolute `/data/...` paths, so restore under `/data`. `manifests-mix-v2`
+   supersedes the older `manifests-real-v1` archive. Not worth archiving: checkpoints (re-download;
+   `queen-base` is a single file anyway), `vendor/`, `hf-cache/`, `dramabox/dd-v1/lnvox/cache` (a second
+   copy of the renders). Keep the bucket private (IEMOCAP: internal research only).
 8. Optional — DramaBox renders (`docs/dramabox-renders.md`): lnvox checkout + its own env with DramaBox
    in `/data/vendor/lnvox`, voicebank in `/data/voices`; run renders with `HF_HOME=/data/hf-cache`.

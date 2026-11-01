@@ -103,8 +103,13 @@ ranges instead (13 s, 0.7 GB RSS).
   2.8). Test: WER 0.003, voice similarity 0.965 to its own voicebank clip vs 0.650 to others. dd-v1 =
   3,500 balanced lines × 2 of the 800 voicebank voices = 7,000 renders → `/data/manifests/mix-v2`
   (mix-v1 + voicebank + renders). Chain log `/data/logs/dramabox-v1.log`, ~11 h.
-- Next: training loop on mix-v1 / mix-v2 (LoRA on the g7, then full fine-tune on a g7e); batched denoise
-  for large self-gen runs.
+- 2026-11-01 — **DramaBox renders done**: 7,000 renders / 19.3 h, no failures, QC dropped 85; 11.5 h on
+  the g7 (denoise 8.7 h). `/data/manifests/mix-v2` train: 26,843 pairs / 41.4 h of targets, 52 % real
+  (dramabox 6,460 targets, emovdb 6,801, iemocap 7,274, ltxself 6,308), 9,028 cross-emotion. Cache done.
+  Archives for S3: `/data/archives/{voices-voicebank-demo,manifests-mix-v2,selfgen-ltxself-v1,
+  dramabox-dd-v1}.tar.zst` (`manifests-mix-v2` includes real-v1 and supersedes `manifests-real-v1`).
+- Next: training loop on mix-v2 (LoRA, then full fine-tune) on the g7e. **Read `docs/handoff.md`
+  first**: S3 restore, `ltx-trainer`'s a2a IC-LoRA vs our reference placement, open items.
 
 ## Data licensing constraints (checked 2026-10-30)
 

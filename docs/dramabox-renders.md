@@ -52,10 +52,28 @@ disk.
 - 14-render test (2 per emotion, 1 voice each): WER 0.003, WavLM similarity to the render's own voicebank
   clip 0.965 vs 0.650 to the other voices. Denoise 4.1–4.6 s per render (9–14 s of audio) after a
   one-time 219 s `torch.compile`; ctx (Gemma 3 12B bf16) ~190 prompts/min; 800 voice refs in ~2 min.
-- dd-v1: 3,500 lines × 2 voices = 7,000 renders over all 800 voices (12 lines needed 2 chunks).
+- dd-v1: 3,500 lines × 2 voices = 7,000 renders over all 800 voices (12 lines needed 2 chunks), no
+  failures or restarts. 19.3 h of speech after lnvox's edge-silence trim (23.3 h of denoised target
+  length). Wall time on the g7, 11.5 h end to end: refs 2 min, ctx 37 min, denoise 8.7 h (4.45 s per
+  chunk; lnvox runs chunks shortest first, so it slows from 4.0 to ~5 s), decode ~1 h, then queen's QC
+  (Whisper on 7,800 clips) ~12 min and cache 47 min (VAE 4 min, Gemma 43 min for 6,736 new prompts).
+- QC dropped 85 renders (1.2 %) at WER > 0.2.
+- Disk: renders 13 GB in `lnvox/artifacts`; `lnvox/cache/tts` holds a second 13 GB copy (lnvox's
+  content cache, only useful to resume a render), so it is left out of the archive.
 
 ## Manifest
 
 `--voicebank` adds each voice's clip (`vb:<voice>`, reference-only: no prompt, so QC never drops it — the
 voicebank lists only some of each clip's utterances, Whisper WER 0.3–0.5); `--renders` adds the renders
 under the same speaker. Renders are QC'd at the synthetic threshold (WER ≤ 0.2).
+
+`/data/manifests/mix-v2` (mix-v1 + voicebank + dd-v1; voices split by speaker 748 / 22 / 30):
+
+| split | pairs | target h | real share | targets by source |
+|---|---|---|---|---|
+| train | 26,843 | 41.4 | 52 % | dramabox 6,460, emovdb 6,801, iemocap 7,274, ltxself 6,308 |
+| val | 427 | 0.7 | 0 % | dramabox 192, ltxself 235 |
+| test | 3,852 | 4.8 | 88 % | dramabox 259, iemocap 1,967, ltxself 186, ravdess 1,440 |
+
+Train relations: 11,685 same-emotion, 9,028 cross-emotion, 6,130 unlabeled. Train clips: dramabox 6,464 /
+17.8 h / 748 voices, voicebank refs 748 / 3.0 h, plus mix-v1's emovdb, iemocap and ltxself.
