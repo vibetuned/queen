@@ -2,25 +2,38 @@
 
 Tested on AWS g7 (RTX PRO 4500 Blackwell 32 GB, driver 595, CUDA 13.2). Same steps for g7e.
 
-1. Run `install.sh` (drivers, CUDA toolkit, uv, formats + mounts the NVMe at `/data`, then reboots).
-2. After the reboot `/data` is **not** remounted (and a stop/start wipes the instance store):
+1. `./install.sh system` (drivers, CUDA toolkit, build tools, uv, rust, git config, formats + mounts
+   the NVMe at `/data`, adds the step-5 exports to `~/.bashrc`, then reboots).
+2. After the reboot `/data` is **not** remounted (and a stop/start wipes the instance store); the
+   restore phase remounts it, or by hand:
    ```bash
    sudo mount /dev/nvme1n1 /data && sudo chown ubuntu:ubuntu /data
    ```
-3. Environment and auth:
+3. Auth (once; the token lives in `~/.cache/huggingface/token`):
    ```bash
    uv sync
    uv run hf auth login        # Read token; accept licenses on Lightricks/LTX-2.5 (+ -Pre-Trained) first
    ```
-4. Weights (~69 GB, a few minutes on AWS):
+4. Everything else in one detached, resumable job — weights (~69 GB, a few minutes), audio DiT
+   extraction, archives from S3 (optional prefix) unpacked under `/data`, then the checks
+   (`pytest`, `queen-manifest stats`, cache file count):
    ```bash
-   scripts/download_checkpoints.sh
+   nohup ./install.sh restore s3://<bucket>/queen/archives > /data/logs/restore.log 2>&1 &
    ```
-5. Optional, in `~/.bashrc` — keep Hugging Face caches off the root disk:
+   Weights only: `scripts/download_checkpoints.sh` + `queen-extract` (README). 2026-11-03 on the g7e:
+   17 min end to end.
+   Gotcha: setting `HF_HOME=/data/hf-cache` moves the default token path too, so `hf auth login`'s
+   token in `~/.cache/huggingface/token` is no longer found ("Access denied. This repository requires
+   approval" on a repo you already have access to). Set `HF_TOKEN_PATH=$HOME/.cache/huggingface/token`
+   alongside `HF_HOME`, as the `~/.bashrc` block does.
+5. `~/.bashrc` (written by `install.sh system`) — keep every cache off the root disk:
    ```bash
-   export HF_HUB_CACHE=/data/hf-cache/hub
-   export HF_XET_CACHE=/data/hf-cache/xet
+   export HF_HOME=/data/hf-cache HF_HUB_CACHE=/data/hf-cache/hub HF_XET_CACHE=/data/hf-cache/xet
+   export HF_TOKEN_PATH=$HOME/.cache/huggingface/token
+   export UV_CACHE_DIR=/data/uv-cache TMPDIR=/data/tmp
    ```
+   Only `~/.cache/uv` from the first `uv sync` (≈ 6 GB) may still sit on root; `uv cache clean` if space
+   gets tight.
 6. Optional — LLM direction pass (`docs/directions.md`): pinned prebuilt llama.cpp (CUDA 12.8 build; the
    distro nvcc 12.4 cannot target sm_120) and Google's QAT Q4_0 GGUF of Gemma 4 12B (6.6 GB):
    ```bash

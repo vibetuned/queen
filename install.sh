@@ -1,89 +1,130 @@
-#! /bin/bash
-# Install dependencies for the project
-# Install uv, a Python package manager
+#!/usr/bin/env bash
+# New EC2 box (g7 / g7e) in two phases. Step list and context: docs/setup.md.
+#
+#   ./install.sh system                 drivers, CUDA, build tools, uv, rust, git config, /data mount,
+#                                       ~/.bashrc cache exports -> reboots
+#   ./install.sh restore [S3_PREFIX]    after the reboot: mount /data, uv sync, HF login check, pull the
+#                                       archives (optional s3://bucket/prefix), download weights, extract
+#                                       the audio DiT, unpack archives under /data, run the checks.
+#                                       Resumable: finished steps are skipped (a file on disk means done).
+#                                       Run detached: nohup ./install.sh restore s3://... > /data/logs/restore.log 2>&1 &
+#
+# Everything big (HF cache, uv cache, tmp, weights, data) lives on /data: the root disk is ~60 GB.
+set -euo pipefail
 
-# Install clang, a C/C++ compiler
-#sudo sed -i 's|http://us-east-1.ec2.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
-#sudo apt update -y -o Acquire::ForceIPv4=true
-sudo apt update -y
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
-sudo apt-get install -y curl unzip
+BASHRC_BLOCK='# queen: keep Hugging Face and uv caches on the NVMe (/data), root disk is ~60 GB (docs/setup.md step 5).
+# HF_HOME moves the default token path too, so point it back at the one `hf auth login` wrote.
+export HF_HOME=/data/hf-cache
+export HF_HUB_CACHE=/data/hf-cache/hub
+export HF_XET_CACHE=/data/hf-cache/xet
+export HF_TOKEN_PATH=$HOME/.cache/huggingface/token
+export UV_CACHE_DIR=/data/uv-cache
+export TMPDIR=/data/tmp'
 
-# Navigate to the temporary directory
-cd /tmp || exit
+mount_data() {
+    if ! mountpoint -q /data; then
+        sudo mkdir -p /data
+        if ! sudo blkid /dev/nvme1n1 >/dev/null; then
+            sudo mkfs -t xfs /dev/nvme1n1  # instance store: blank after every stop/start
+        fi
+        sudo mount /dev/nvme1n1 /data
+        sudo chown ubuntu:ubuntu /data
+    fi
+    mkdir -p /data/{logs,tmp,hf-cache,uv-cache,checkpoints,archives}
+}
 
-# Download the installation file
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+phase_system() {
+    sudo apt update -y
+    sudo apt-get install -y curl unzip clang build-essential pkg-config libhdf5-dev tmux zstd \
+        "linux-headers-$(uname -r)"
 
-# Unzip the package (using -q to keep script logs quiet)
-unzip -q awscliv2.zip
+    # AWS CLI v2 (S3 archives)
+    if ! command -v aws >/dev/null; then
+        (cd /tmp && curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip &&
+            unzip -q awscliv2.zip && sudo ./aws/install && rm -rf awscliv2.zip aws)
+    fi
 
-# Run the install program
-sudo ./aws/install
+    mount_data
 
-# Clean up the installation artifacts
-rm -rf awscliv2.zip aws/
+    # NVIDIA driver 595 (headless) + CUDA toolkit; loaded by the reboot at the end
+    sudo apt-get install -y nvidia-headless-595-server-open nvidia-utils-595-server nvidia-cuda-toolkit
+    sudo update-initramfs -u
 
-# Return to your previous working directory
-cd -
-#export HF_HUB_CACHE=/data/hf-cache/hub
-#export HF_XET_CACHE=/data/hf-cache/xet
+    git config --global user.name "Pedro Fillastre"
+    git config --global user.email "pfillastre@vibetuned.com"
+    git config --global credential.helper 'cache --timeout=3600'
 
+    command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+    # Rust toolchain for the native prior generator
+    command -v cargo >/dev/null || curl https://sh.rustup.rs -sSf | sh -s -- -y
 
-# Mount temporary storage
-# Define your paths
-S3_URI="s3://.."
-LOCAL_DIR="/data/checkpoints"
+    grep -q 'UV_CACHE_DIR=/data/uv-cache' ~/.bashrc || printf '\n%s\n' "$BASHRC_BLOCK" >> ~/.bashrc
 
-sudo mkfs -t xfs /dev/nvme1n1
-sudo mkdir /data
-sudo mount /dev/nvme1n1 /data
-sudo chown -R ubuntu:ubuntu /data
+    echo "system phase done; rebooting to load the driver. Then: ./install.sh restore [s3://bucket/prefix]"
+    sudo reboot
+}
 
-# export S3_URI="s3://.."
-# export LOCAL_DIR="/data/checkpoints/"
-#sudo mkdir -p "$LOCAL_DIR"
-#sudo chown -R ubuntu:ubuntu "$LOCAL_DIR"
+phase_restore() {
+    local s3="${1:-}"
+    eval "$BASHRC_BLOCK"
+    mount_data
+    cd "$REPO"
 
-#ln -s "$LOCAL_DIR" "$HOME/queen/checkpoints"
-# aws s3 sync "$S3_URI" "$LOCAL_DIR" --quiet
-# aws s3 sync "$LOCAL_DIR" "$S3_URI" --quiet
-sudo apt install -y clang
+    uv sync
+    if ! uv run --no-sync hf auth whoami >/dev/null 2>&1; then
+        echo "not logged in to Hugging Face: run 'uv run hf auth login' (read token; accept the Lightricks/LTX-2.5 license first)" >&2
+        exit 1
+    fi
+    if [[ -n $s3 ]]; then
+        aws s3 cp "$s3/" /data/archives/ --recursive --exclude '*' --include '*.tar.zst' --include '*.sha256'
+    fi
 
-# Install standard Ubuntu utilities for compiling
-sudo apt-get install -y build-essential
+    local src=/data/checkpoints/LTX-2.5/diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors
+    local out=/data/checkpoints/queen-base/ltx-2.5-audio-transformer-bf16.safetensors
+    # Weights and archives in parallel: both are I/O bound on different sources.
+    (
+        scripts/download_checkpoints.sh
+        if [[ ! -s $out ]]; then
+            mkdir -p "$(dirname "$out")"
+            uv run --no-sync queen-extract "$src" "$out"  # 13 s, streams byte ranges, never mmaps the 42 GB file
+        fi
+        echo "weights done: $(du -h "$out" | cut -f1)"
+    ) > /data/logs/restore-weights.log 2>&1 &
+    local w=$!
+    (
+        cd /data/archives
+        shopt -s nullglob
+        for f in *.tar.zst; do
+            local a=${f%.tar.zst}
+            [[ $a == manifests-real-v1 ]] && continue  # superseded by manifests-mix-v2
+            if [[ -e .unpacked-$a ]]; then echo "skip $a (already unpacked)"; continue; fi
+            sha256sum -c "$f.sha256"
+            tar -I zstd -xf "$f" -C /data
+            touch ".unpacked-$a"
+            echo "unpacked $a"
+        done
+        echo "archives done"
+    ) > /data/logs/restore-unpack.log 2>&1 &
+    local u=$! rc=0
+    wait $w || { echo "weights FAILED, see /data/logs/restore-weights.log"; rc=1; }
+    wait $u || { echo "unpack FAILED, see /data/logs/restore-unpack.log"; rc=1; }
+    [[ $rc -eq 0 ]] || exit $rc
+    tail -n1 /data/logs/restore-weights.log /data/logs/restore-unpack.log
 
-# Install the Linux headers for your current kernel version
-sudo apt-get install -y linux-headers-$(uname -r)
+    echo "== checks =="
+    if [[ -d /data/manifests/mix-v2 ]]; then
+        echo "cache files (expect 59132): $(find /data/manifests/mix-v2/cache -type f | wc -l)"
+        uv run --no-sync queen-manifest stats /data/manifests/mix-v2 | head -20
+    fi
+    uv run --no-sync pytest -q
+    echo "restore done"
+}
 
-# Install the NVIDIA driver (headless version is best for servers)
-sudo apt-get install -y nvidia-headless-595-server-open nvidia-utils-595-server
-
-# Install the CUDA Toolkit
-sudo apt-get install -y nvidia-cuda-toolkit
-
-# Update the initramfs to include the new NVIDIA driver
-sudo update-initramfs -u
-
-# Set your Git variables
-GIT_NAME="Pedro Fillastre"
-GIT_EMAIL=""pfillastre@vibetuned.com"
-
-# Apply global configuration
-git config --global user.name "$GIT_NAME"
-git config --global user.email "$GIT_EMAIL"
-
-git config --global credential.helper 'cache --timeout=3600'
-
-curl -LsSf https://astral.sh/uv/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
-
-# Rust toolchain + libhdf5 (pkg-config discovery) for the native prior generator
-# (prior-gen/, built by build_prior_v2.sh); tmux for the detached run_*.sh launchers.
-sudo apt-get install -y libhdf5-dev pkg-config tmux
-curl https://sh.rustup.rs -sSf | sh -s -- -y
-export PATH="$HOME/.cargo/bin:$PATH"
-
-# Reboot the instance to load the driver
-
-sudo reboot
+case "${1:-}" in
+    system) phase_system ;;
+    restore) phase_restore "${2:-}" ;;
+    *) sed -n '2,13p' "$0"; exit 1 ;;
+esac

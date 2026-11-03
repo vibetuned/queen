@@ -40,6 +40,14 @@ class Paths:
     text_encoder: str = str(CHECKPOINTS / "LTX-2.5/text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors")
     audio_vae: str = str(CHECKPOINTS / "LTX-2.5/vae/ltx-2.5-audio-vae-bf16.safetensors")
     duration_head: str | None = str(CHECKPOINTS / "LTX-2.5/model_patches/ltx-2.5-duration-head-bf16.safetensors")
+    loras: list[str] = field(default_factory=list)  # "PATH" or "PATH:STRENGTH", ComfyUI key layout (queen-train output)
+
+
+def parse_lora(spec: str) -> tuple[str, float]:
+    path, sep, strength = spec.rpartition(":")
+    if sep and path and strength.replace(".", "", 1).isdigit():
+        return str(Path(path).resolve()), float(strength)
+    return str(Path(spec).resolve()), 1.0
 
 
 @dataclass
@@ -245,6 +253,7 @@ def phase_denoise(plan: Plan, root: Path, device: torch.device) -> None:
     from ltx_core.components.noisers import GaussianNoiser
     from ltx_core.components.schedulers import LTX2Scheduler
     from ltx_core.conditioning import AudioConditionByReferenceLatent
+    from ltx_core.loader import LTXV_LORA_COMFY_RENAMING_MAP, LoraPathStrengthAndSDOps
     from ltx_core.model.transformer import LTXV_AUDIO_ONLY_MODEL_COMFY_RENAMING_MAP, LTXAudioOnlyModelConfigurator
     from ltx_core.types import AudioLatentShape
     from ltx_pipelines.iclora_utils import patchify_audio_reference_latent
@@ -259,7 +268,10 @@ def phase_denoise(plan: Plan, root: Path, device: torch.device) -> None:
         plan.paths.transformer,
         dtype=DTYPE,
         device=device,
-        loras=(),
+        loras=tuple(
+            LoraPathStrengthAndSDOps(path, strength, LTXV_LORA_COMFY_RENAMING_MAP)
+            for path, strength in map(parse_lora, plan.paths.loras)
+        ),
         model_configurator=LTXAudioOnlyModelConfigurator,
         model_sd_ops=LTXV_AUDIO_ONLY_MODEL_COMFY_RENAMING_MAP,
     )
@@ -395,6 +407,7 @@ def _cmd_plan(args: argparse.Namespace) -> None:
         text_encoder=args.text_encoder,
         audio_vae=args.audio_vae,
         duration_head=args.duration_head or None,
+        loras=[f"{p}:{s}" for p, s in map(parse_lora, args.lora or [])],
     )
     params = Params.from_checkpoint(paths.transformer)
     for name in ("steps", "cfg_scale", "stg_scale", "ref_seconds"):
@@ -433,6 +446,7 @@ def main() -> None:
     p_plan.add_argument("--text-encoder", default=defaults.text_encoder)
     p_plan.add_argument("--audio-vae", default=defaults.audio_vae)
     p_plan.add_argument("--duration-head", default=defaults.duration_head, help="'' to disable")
+    p_plan.add_argument("--lora", action="append", help="LoRA safetensors, 'PATH' or 'PATH:STRENGTH'; repeatable")
     p_plan.add_argument("--steps", type=int)
     p_plan.add_argument("--cfg-scale", type=float)
     p_plan.add_argument("--stg-scale", type=float)

@@ -108,15 +108,18 @@ ranges instead (13 s, 0.7 GB RSS).
   (dramabox 6,460 targets, emovdb 6,801, iemocap 7,274, ltxself 6,308), 9,028 cross-emotion. Cache done.
   Archives for S3: `/data/archives/{voices-voicebank-demo,manifests-mix-v2,selfgen-ltxself-v1,
   dramabox-dd-v1}.tar.zst` (`manifests-mix-v2` includes real-v1 and supersedes `manifests-real-v1`).
-- Next: training loop on mix-v2 (LoRA, then full fine-tune) on the g7e. **Read `docs/handoff.md`
-  first**: S3 restore, `ltx-trainer`'s a2a IC-LoRA vs our reference placement, open items.
+- 2026-11-03 — **g7e restored** (`./install.sh restore`, 17 min; `docs/setup.md`). **Training loop built**
+  (`queen-train`, `docs/training.md`): pairs + cache → `[noisy target | clean reference at negative RoPE
+  positions]`, flow-matching velocity loss on the target, LoRA r32 on audio attn/FFN (82 M params), saved in
+  ComfyUI layout so `queen-stage plan --lora` fuses it via ltx-core. Checks passed: zero-LoRA bit-identical
+  to base, one-pair overfit regenerates with WER 0 / sim 0.94. σ sampler fed `T×16` tokens to match the
+  inference scheduler. 246 ms/sample on the g7e → ~2.4 h/epoch. Run `lora-v1` (3 epochs) started;
+  baseline eval `queen-train eval` (no LoRA) in `/data/runs/eval-base`.
+- Next: read `lora-v1` results (`/data/logs/lora-v1.log`, `queen-train eval --lora`), then full
+  fine-tune. `docs/handoff.md` still lists the open items (IEMOCAP release form, emotion judge).
 
 ## Data licensing constraints (checked 2026-10-30)
 
-- **fishaudio/drama-3 outputs cannot be training data**, even for non-profit research. Fish Audio
-  Community License §IV: no use of the Materials "or any output or results … to create, train, distill,
-  or improve … any speech, audio, or voice generation model", unless Fish Audio grants a separate
-  written agreement (worth asking as a non-profit lab).
 - DramaBox (ResembleAI/Dramabox) is under the LTX-2 Community License, like our base: training on its
   outputs is allowed, and the result is a "Derivative of LTX-2" that must ship under that license. The
   paid-agreement clause (≥ $10M annual revenue) does not apply to vibetuned.

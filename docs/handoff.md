@@ -8,6 +8,9 @@ move anything here that is still true into `CLAUDE.md` / `docs/` and delete this
 
 ## 1. Restore on the g7e
 
+**Done 2026-11-03** with `./install.sh restore` (steps 1–3 below in one resumable job, 17 min on the
+g7e; all checks pass: 40 tests, 26,843 train pairs, 59,132 cache files). Kept for the next machine.
+
 1. `docs/setup.md` steps 1–4: mount `/data`, `uv sync`, `hf auth login`, `scripts/download_checkpoints.sh`.
    Then extract the audio DiT (README; 13 s, it never mmaps the 42 GB file):
    ```bash
