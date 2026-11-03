@@ -17,3 +17,4 @@ checkpoints
 outputs/
 wandb/
 .env
+runs

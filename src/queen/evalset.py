@@ -70,6 +70,7 @@ def run_eval(
     seed: int,
     device: str,
     summary_only: bool = False,
+    transformer: str | None = None,
 ) -> dict:
     if summary_only:  # re-score an existing run from its eval.json
         sources = json.loads((out / "sources.json").read_text(encoding="utf-8"))
@@ -77,7 +78,8 @@ def run_eval(
         for i in items:
             i["source"] = sources[i["id"]]
         rows = json.loads((out / "eval.json").read_text(encoding="utf-8"))
-        summary = {"loras": loras, "split": split, "per_source": per_source, "seed": seed, "sources": summarize(items, rows)}
+        summary = {"loras": loras, "transformer": transformer, "split": split, "per_source": per_source, "seed": seed,
+                   "sources": summarize(items, rows)}  # fmt: skip
         (out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
         return summary
     clips, pairs = read_manifest(manifest)
@@ -90,12 +92,15 @@ def run_eval(
     plan_cmd = [sys.executable, "-m", "queen.staged", "plan", str(items_file), str(out)]
     for lora in loras:
         plan_cmd += ["--lora", lora]
+    if transformer:
+        plan_cmd += ["--transformer", str(Path(transformer).resolve())]
     subprocess.run(plan_cmd, check=True)
     subprocess.run([sys.executable, "-m", "queen.staged", "run", str(out), "--device", device], check=True)
     from queen.eval import evaluate
 
     rows = evaluate(out, device)
-    summary = {"loras": loras, "split": split, "per_source": per_source, "seed": seed, "sources": summarize(items, rows)}
+    summary = {"loras": loras, "transformer": transformer, "split": split, "per_source": per_source, "seed": seed,
+               "sources": summarize(items, rows)}  # fmt: skip
     (out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary
 

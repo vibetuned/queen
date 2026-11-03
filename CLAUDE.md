@@ -25,7 +25,10 @@ judge data and model licenses on that basis.
   from `github.com/Lightricks/LTX-2` tag `v1.5.0` (PyPI's ltx-core is stale). See `pyproject.toml`
   comments for the cuDNN override and the torchaudio test index.
 - New instance bootstrap: `docs/setup.md` (mount `/data`, `uv sync`, `hf auth login`, download weights).
-- `checkpoints/` → symlink to `/data/checkpoints`.
+- `QUEEN_DATA` (default `/data`) is the data root for the inference path (`queen-stage` checkpoints,
+  `scripts/inference_bundle.sh`, `scripts/archive_data.sh`) — set it on boxes without `/data` (RTX 5090, DGX Spark).
+- `checkpoints/` → symlink to `/data/checkpoints`; `runs/` → symlink to `/data/runs` (browse eval wavs,
+  e.g. `runs/eval-lora-v1-3500/wav/`). Both git-ignored.
 
 ## Model facts (details: `docs/ltx25-anatomy.md`)
 
@@ -115,8 +118,26 @@ ranges instead (13 s, 0.7 GB RSS).
   to base, one-pair overfit regenerates with WER 0 / sim 0.94. σ sampler fed `T×16` tokens to match the
   inference scheduler. 246 ms/sample on the g7e → ~2.4 h/epoch. Run `lora-v1` (3 epochs) started;
   baseline eval `queen-train eval` (no LoRA) in `/data/runs/eval-base`.
-- Next: read `lora-v1` results (`/data/logs/lora-v1.log`, `queen-train eval --lora`), then full
-  fine-tune. `docs/handoff.md` still lists the open items (IEMOCAP release form, emotion judge).
+- 2026-11-03 — **`lora-v1` done** (3 epochs, 5,034 steps, 5.9 h on the g7e; val loss 0.636 → 0.614).
+  **Verdict at step 3500** (200 test items, same as baseline): babbling eliminated — WER mean
+  dramabox 0.30 → 0.008, iemocap 1.02 → 0.016, ltxself 0.13 → 0.008, ravdess 2.63 → 0.000; share
+  WER ≤ 0.2 98–100 % everywhere, 0 items ≥ 1 (baseline 59/200). WavLM similarity to own reference
+  dramabox 0.80 → 0.94, iemocap 0.72 → 0.86, ravdess 0.68 → 0.86, with similarity to other references
+  flat (~0.63). **Final checkpoint (5034)**: WER ≤ 0.2 on 100 % of items, sim own 0.94 / 0.85 / 0.62 /
+  0.86 → ship `/data/runs/lora-v1/lora_step_05034.safetensors`. Listening test: good. Tables in
+  `docs/training.md`. `runs/` symlink in the repo → `/data/runs` to browse `eval-*/wav/`.
+- 2026-11-03 — **Inference bundle** (`scripts/inference_bundle.sh pack|upload|download`, `docs/setup.md`
+  §9): the four safetensors `queen-stage` needs (~36 GB, no dev transformer) + `runs-lora-v1.tar.zst`
+  (LoRA 3500 + 5034, evals with wavs) → `s3://lab-datasets-eu-west-3/test_model/queen/inference-lora-v1/`.
+  Gemma still needs ~26 GB GPU / 27 GB host RAM for the ctx phase (the g7 is fine; a 24 GB card is not).
+- 2026-11-03 — **Full fine-tune started**: `queen-train run --full true` (all 3.29B DiT params, fp32 masters +
+  bf16 autocast, 69 GB GPU; checkpoints are drop-in extracted-layout transformers → `queen-stage plan
+  --transformer`, `queen-train eval --transformer`). Run `full-v1` (`/data/runs/full-v1`, log
+  `/data/logs/full-v1.log`, ends "full-v1 train done"): lr 1e-5, 3 epochs, same recipe as lora-v1 otherwise.
+- Next: when full-v1 ends, `queen-train eval … --transformer /data/runs/full-v1/transformer_step_05034.safetensors
+  --per-source 50` → compare with lora-v1 (`docs/training.md`); emotion / naturalness judge; long targets
+  (> 10 s) and the no-reference path. `docs/handoff.md` still lists the open items (IEMOCAP release form,
+  emotion judge).
 
 ## Data licensing constraints (checked 2026-10-30)
 

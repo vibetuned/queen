@@ -64,3 +64,23 @@ Tested on AWS g7 (RTX PRO 4500 Blackwell 32 GB, driver 595, CUDA 13.2). Same ste
    copy of the renders). Keep the bucket private (IEMOCAP: internal research only).
 8. Optional — DramaBox renders (`docs/dramabox-renders.md`): lnvox checkout + its own env with DramaBox
    in `/data/vendor/lnvox`, voicebank in `/data/voices`; run renders with `HF_HOME=/data/hf-cache`.
+9. **Inference-only machine** (test the fine-tuned model without the 42 GB dev transformer: a g7, the
+   RTX 5090 box, the DGX Spark): steps 1–3 above (skip the weights download). Machines without `/data`
+   set `QUEEN_DATA` to any folder with ~40 GB free; `queen-stage` and the scripts resolve
+   `checkpoints/`, `runs/`, `archives/` under it (default `/data`).
+   ```bash
+   export QUEEN_DATA=$HOME/queen-data   # omit where /data exists; put it in ~/.bashrc
+   scripts/inference_bundle.sh download s3://lab-datasets-eu-west-3/test_model/queen/inference-lora-v1 lora-v1
+   uv run queen-stage plan items.jsonl $QUEEN_DATA/runs/demo --lora $QUEEN_DATA/runs/lora-v1/lora_step_05034.safetensors
+   uv run queen-stage run $QUEEN_DATA/runs/demo && uv run queen-eval $QUEEN_DATA/runs/demo
+   ```
+   Only the inference path honours `QUEEN_DATA`; manifests, caches and the dataset tools still assume `/data`
+   (their files carry absolute `/data/...` paths).
+   The bundle (~36 GB) is the extracted audio DiT (9.9 GB), Gemma 4 12B text encoder with projections
+   (25 GB), audio VAE, duration head — keys mirror `/data`, with `.sha256` sidecars — plus
+   `runs-lora-v1.tar.zst` (LoRA steps 3500 + 5034, `config.json`, `log.jsonl`, and the eval runs
+   `eval-base`, `eval-lora-v1-3500`, `eval-lora-v1` with wavs, refs, transcripts). Publish from the training
+   box with `scripts/inference_bundle.sh pack lora-v1` then `upload <prefix> lora-v1` (needs AWS
+   credentials). Limits: the ctx phase loads Gemma in bf16 → ~26 GB GPU and ~27 GB host RAM; a 24 GB card
+   can only run denoise + decode on text features cached elsewhere. The eval runs contain IEMOCAP clips:
+   keep the prefix private.

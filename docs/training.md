@@ -14,8 +14,44 @@
   - **Overfit one pair** (300 steps, lr 3e-4): loss 0.66 → 0.19; regenerated through `queen-stage`,
     WER 0.14 → 0.00 on the seed that babbled, similarity to the reference 0.82 / 0.88 → 0.94 / 0.94.
   - Cached reference latents use the same −4 dBFS peak normalisation as `queen-stage` (§6.5 closed).
-  - **Run `lora-v1` started** (`/data/runs/lora-v1`, log `/data/logs/lora-v1.log`): defaults below,
-    5,034 optimizer steps × 16 samples, checkpoints + val loss every 500 steps.
+  - **Run `lora-v1` done** (`/data/runs/lora-v1`, log `/data/logs/lora-v1.log`): defaults below,
+    5,034 optimizer steps × 16 samples (3 epochs), 5.9 h at 3.87 samples/s, checkpoints + val loss every
+    500 steps. Train loss (500-step mean) 0.62 → 0.55, val loss 0.636 (step 500) → 0.614 (5034), both
+    still creeping down at the end; grad norm 0.02–0.12, no spikes.
+  - **Verdict at step 3500** (`/data/runs/eval-lora-v1-3500`, same 200 items / seed as the baseline):
+    the babbling is gone and voice transfer is real-speech-grade.
+
+    | source (test) | WER mean | WER ≤ 0.2 | WER ≥ 1 | sim own ref | sim other refs |
+    |---|---|---|---|---|---|
+    | dramabox | 0.30 → **0.008** | 66 → **100 %** | 8 → **0**/50 | 0.799 → **0.935** | 0.639 → 0.632 |
+    | iemocap S5 | 1.02 → **0.016** | 38 → **98 %** | 22 → **0**/50 | 0.717 → **0.857** | 0.636 → 0.648 |
+    | ltxself | 0.13 → **0.008** | 86 → **98 %** | 4 → **0**/50 | 0.604 → 0.616 | 0.588 → 0.596 |
+    | ravdess | 2.63 → **0.000** | 50 → **100 %** | 25 → **0**/50 | 0.683 → **0.861** | 0.561 → 0.642 |
+
+    Worst items are single-word slips (WER 0.17–0.33, e.g. "revolutionize" → "revolutionizing"). Output
+    durations match the requested ones (duration head not used). Similarity to *other* references is
+    flat, so the gain is voice-specific, not a generic "sounds more human" shift. ltxself stays low on
+    both columns: WavLM barely separates LTX-generated voices. RAVDESS (never trained on, only 2
+    sentences, 24 actors) is the cleanest generalisation signal. Not yet measured: emotion, naturalness,
+    long targets (> 10 s), the no-reference path.
+  - **Final checkpoint (step 5034)** (`/data/runs/eval-lora-v1`): WER mean dramabox 0.006, iemocap 0.009,
+    ltxself 0.003, ravdess 0.000; WER ≤ 0.2 on **100 %** of items in all four sources; sim own
+    0.938 / 0.852 / 0.622 / 0.863, sim others 0.63–0.65. Marginally better than 3500 → **ship
+    `lora_step_05034.safetensors`**. Listening test (user): sounds great.
+  - **Full fine-tune mode** (`queen-train run --full true`): all 3,286 M DiT params, fp32 master weights
+    under bf16 autocast, fused AdamW; checkpoints are the 1715-tensor extracted layout (DiT tensors
+    replaced, connectors + metadata copied from the base; per-key dtype kept — the 97 scale-shift tables
+    are fp32 in the file) → `queen-stage plan --transformer FILE`, `queen-train eval --transformer FILE`.
+    Checks: `save_full` of an untouched model reproduces the base file (bf16 tensors byte-identical, fp32
+    tables equal after bf16 rounding); a 3-step smoke checkpoint generates through `queen-stage`.
+    Smoke: 69 GB GPU, 2.9–3.8 samples/s on 11–12 s targets, checkpoint write 46 s (10.6 GB) + 26 s
+    resume state (39 GB: fp32 weights + Adam).
+  - **Run `full-v1` started 2026-11-03 22:34 UTC** (`/data/runs/full-v1`, `/data/logs/full-v1.log`):
+    `--full true --lr 1e-5 --epochs 3 --save-every 1000 --val-every 500`, otherwise the lora-v1 recipe
+    (same data order, seed, σ sampler, dropouts) so the comparison is LoRA vs full only.
+  - **Inference bundle for smaller machines** (`scripts/inference_bundle.sh`, `docs/setup.md` §9):
+    extracted audio DiT + Gemma text encoder + audio VAE + duration head (~36 GB, no 42 GB dev transformer)
+    and `runs-lora-v1.tar.zst` (LoRA steps 3500 + 5034, config, log, the three eval runs with wavs).
   - **Baseline, base model zero-shot** (`/data/runs/eval-base`, 50 test pairs per source, seed 10,
     target duration = real recording's). WER is bimodal: an item either reads the text or babbles
     (WER ≥ 1); the real-speech references are where it breaks.
@@ -97,10 +133,10 @@ Epoch = 26,843 pairs. Budget guess: ~0.3–0.5 s per pair fwd+bwd with checkpoin
 | | LoRA (first) | Full fine-tune (after) |
 |---|---|---|
 | trainable | `audio_attn1/2.to_{q,k,v,out.0}`, `audio_ff.net.{0.proj,2}` in all 48 blocks; rank 32, α 32, dropout 0 | all 3.286 B DiT params |
-| base dtype | bf16 frozen; LoRA weights fp32, autocast bf16 | bf16 weights, fp32 master via AdamW (~53 GB + activations; fits 96 GB), or 8-bit Adam |
-| optimizer | AdamW lr 1e-4, wd 0, β (0.9, 0.99), warmup 200, cosine to 10 % | AdamW lr 1e-5 |
+| base dtype | bf16 frozen; LoRA weights fp32, autocast bf16 | fp32 master weights, autocast bf16 (13 GB weights + 13 GB grads + 26 GB Adam + bf16 casts/activations ≈ 69 GB measured) |
+| optimizer | AdamW lr 1e-4, wd 0, β (0.9, 0.99), warmup 200, cosine to 10 % | fused AdamW lr 1e-5, same schedule |
 | grad clip | 1.0 | 1.0 |
-| length | 3 epochs (~5 k optimizer steps at eff. batch 16), eval every 500 | tbd |
+| length | 3 epochs (~5 k optimizer steps at eff. batch 16), eval every 500 | 3 epochs, checkpoint every 1000 (10.6 GB each) |
 
 The connector, `audio_patchify`, `audio_proj_out`, adaln, and the text projection stay frozen.
 
@@ -146,6 +182,9 @@ uv run queen-train eval /data/manifests/mix-v2 /data/runs/eval-05000 --lora /dat
 #   -> OUT/items.jsonl, staged run (refs/ctx/latents/wav), eval.json, summary.json (per source: WER mean/median,
 #      share ≤ 0.2, WavLM sim to own ref vs others). Without --lora: the base-model baseline.
 uv run queen-stage plan items.jsonl out --lora PATH[:STRENGTH]     # any staged run can use the adapter
+uv run queen-train run  /data/manifests/mix-v2 /data/runs/full-v1 --full true --lr 1e-5 --save-every 1000
+#   -> OUT/transformer_step_NNNNN.safetensors (drop-in for the extracted checkpoint); OUT/state_latest.pt is 39 GB
+uv run queen-train eval /data/manifests/mix-v2 /data/runs/eval-full-v1 --transformer /data/runs/full-v1/transformer_step_05034.safetensors
 ```
 Detached as usual: `nohup bash -c '… && echo "train done"' > /data/logs/lora-v1.log 2>&1 &`; the log has
 one JSON line per 10 steps (loss, grad norm, lr, samples/s, ETA, mean σ) and `{"step", "val_loss"}` lines.

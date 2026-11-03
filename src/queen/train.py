@@ -8,7 +8,9 @@ exactly how ``queen-stage`` conditions at inference (``AudioConditionByReference
 tokens only. Design and rationale: ``docs/training.md``.
 
 LoRA weights are saved in the ComfyUI key layout ltx-core fuses (``diffusion_model.<module>.lora_{A,B}.weight``),
-so ``queen-stage plan --lora FILE`` uses them with no extra loading code.
+so ``queen-stage plan --lora FILE`` uses them with no extra loading code. ``--full`` trains every DiT parameter
+instead (fp32 master weights under bf16 autocast, ~65 GB) and saves the 1715-tensor extracted-checkpoint
+layout, a drop-in ``queen-stage plan --transformer FILE``.
 """
 
 import argparse
@@ -77,6 +79,7 @@ class Config:
     max_steps: int | None = None  # optimizer steps; for timing / smoke runs
     limit: int | None = None  # train on the first N train pairs only (overfit checks)
     gradient_checkpointing: bool = False  # 2.4x slower (602 vs 246 ms/sample on the g7e), saves ~6 GB of 14
+    full: bool = False  # fine-tune all DiT params (no LoRA; rank/alpha ignored; use a lower lr, e.g. 1e-5)
 
 
 # ----- timestep sampler (ltx_trainer.timestep_samplers.ShiftedLogitNormalTimestepSampler, LTX-2 v1.5.0) -----
@@ -269,6 +272,56 @@ def save_lora(model: torch.nn.Module, path: Path, metadata: dict) -> None:
     os.replace(tmp, path)
 
 
+def prepare_full(dit: torch.nn.Module) -> torch.nn.Module:
+    """Full fine-tune: every DiT parameter trainable, fp32 master weights (autocast runs the matmuls in bf16)."""
+    dit.float()
+    dit.requires_grad_(True)
+    return dit
+
+
+def checkpoint_key_map(transformer: str) -> dict[str, str]:
+    """model state_dict key -> key in the extracted checkpoint, via ltx-core's renaming map (1457 DiT tensors)."""
+    from ltx_core.model.transformer import LTXV_AUDIO_ONLY_MODEL_COMFY_RENAMING_MAP
+    from safetensors import safe_open
+
+    out: dict[str, str] = {}
+    with safe_open(transformer, "pt") as f:
+        for key in f.keys():
+            mapped = LTXV_AUDIO_ONLY_MODEL_COMFY_RENAMING_MAP.apply_to_key(key)
+            if mapped is not None:
+                assert mapped not in out, mapped
+                out[mapped] = key
+    return out
+
+
+def save_full(model: torch.nn.Module, transformer: str, path: Path, metadata: dict) -> None:
+    """Write the fine-tuned DiT as a drop-in for the extracted checkpoint: same 1715 keys, bf16, original
+    metadata (ltx-core reads the model config from it); the frozen connectors are copied from ``transformer``."""
+    from safetensors import safe_open
+
+    key_map = checkpoint_key_map(transformer)
+    sd = model.state_dict()
+    missing = set(key_map) ^ set(sd)
+    if missing:
+        raise RuntimeError(f"{len(missing)} keys differ between the model and {transformer}: {sorted(missing)[:5]}")
+    # keep each tensor in the dtype the base file uses (bf16 weights; the 97 scale-shift tables are fp32)
+    dtypes = {"BF16": torch.bfloat16, "F32": torch.float32, "F16": torch.float16}
+    with safe_open(transformer, "pt") as f:
+        meta = dict(f.metadata() or {})
+        tensors = {}
+        for k, v in sd.items():
+            key = key_map[k]
+            tensors[key] = v.detach().to(dtypes[f.get_slice(key).get_dtype()]).cpu().contiguous()
+        for key in f.keys():
+            if key not in tensors:
+                tensors[key] = f.get_tensor(key)
+    meta["queen_train"] = json.dumps(metadata)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    save_file(tensors, str(tmp), metadata=meta)
+    os.replace(tmp, path)
+
+
 def lr_at(step: int, total: int, cfg: Config) -> float:
     if step < cfg.warmup_steps:
         return cfg.lr * (step + 1) / cfg.warmup_steps
@@ -317,19 +370,22 @@ def train(cfg: Config, device: torch.device) -> None:
     connector.requires_grad_(False)
     dit = build_dit(cfg.transformer, device)
     dit.set_gradient_checkpointing(cfg.gradient_checkpointing)
-    model = add_lora(dit, cfg)
+    model = prepare_full(dit) if cfg.full else add_lora(dit, cfg)
     params = [p for p in model.parameters() if p.requires_grad]
-    print(f"trainable params {sum(p.numel() for p in params) / 1e6:.1f}M", flush=True)
-    opt = torch.optim.AdamW(params, lr=cfg.lr, betas=cfg.betas, weight_decay=cfg.weight_decay)
+    print(f"trainable params {sum(p.numel() for p in params) / 1e6:.1f}M ({'full' if cfg.full else 'LoRA'})", flush=True)
+    opt = torch.optim.AdamW(params, lr=cfg.lr, betas=cfg.betas, weight_decay=cfg.weight_decay, fused=cfg.full)
     sampler = ShiftedLogitNormal(cfg.timestep_std, uniform_prob=cfg.timestep_uniform_prob)
 
     state = State()
     latest = out / "state_latest.pt"
     if latest.exists():
         saved = torch.load(latest, map_location="cpu", weights_only=False)
-        from peft import set_peft_model_state_dict
+        if cfg.full:
+            model.load_state_dict(saved["model"])
+        else:
+            from peft import set_peft_model_state_dict
 
-        set_peft_model_state_dict(model, saved["lora"])
+            set_peft_model_state_dict(model, saved["lora"])
         opt.load_state_dict(saved["optimizer"])
         state = State(**saved["state"])
         print(f"resumed at step {state.step} (epoch {state.epoch}, position {state.position})", flush=True)
@@ -357,14 +413,17 @@ def train(cfg: Config, device: torch.device) -> None:
         return sum(losses) / max(1, len(losses))
 
     def checkpoint() -> None:
-        save_lora(model, out / f"lora_step_{state.step:05d}.safetensors", {**dataclasses.asdict(cfg), "step": state.step})
-        tmp = out / "state_latest.pt.tmp"
-        from peft import get_peft_model_state_dict
+        meta = {**dataclasses.asdict(cfg), "step": state.step}
+        if cfg.full:
+            save_full(model, cfg.transformer, out / f"transformer_step_{state.step:05d}.safetensors", meta)
+            weights = {"model": model.state_dict()}  # fp32 master weights for resume (13 GB; optimizer adds 26 GB)
+        else:
+            save_lora(model, out / f"lora_step_{state.step:05d}.safetensors", meta)
+            from peft import get_peft_model_state_dict
 
-        torch.save(
-            {"lora": get_peft_model_state_dict(model), "optimizer": opt.state_dict(), "state": dataclasses.asdict(state)},
-            tmp,
-        )
+            weights = {"lora": get_peft_model_state_dict(model)}
+        tmp = out / "state_latest.pt.tmp"
+        torch.save({**weights, "optimizer": opt.state_dict(), "state": dataclasses.asdict(state)}, tmp)
         os.replace(tmp, latest)
 
     model.train()
@@ -425,7 +484,7 @@ def train(cfg: Config, device: torch.device) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="LoRA fine-tuning of the LTX-2.5 audio DiT on a queen manifest.")
+    parser = argparse.ArgumentParser(description="LoRA or full fine-tuning of the LTX-2.5 audio DiT on a queen manifest.")
     sub = parser.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="Train (resumes from OUT/state_latest.pt if present)")
     r.add_argument("manifest", type=Path)
@@ -446,6 +505,7 @@ def main() -> None:
     e.add_argument("manifest", type=Path)
     e.add_argument("out", type=Path, help="staged run root; summary.json is written here")
     e.add_argument("--lora", action="append", default=[], help="'PATH' or 'PATH:STRENGTH'; repeatable; none = base model")
+    e.add_argument("--transformer", default=None, help="fine-tuned transformer (queen-train --full output); default: base")
     e.add_argument("--split", default="test")
     e.add_argument("--per-source", type=int, default=50)
     e.add_argument("--seed", type=int, default=10)
@@ -456,7 +516,10 @@ def main() -> None:
         from queen.evalset import print_summary, run_eval
 
         print_summary(
-            run_eval(args.manifest, args.out, args.lora, args.split, args.per_source, args.seed, args.device, args.summary_only)
+            run_eval(
+                args.manifest, args.out, args.lora, args.split, args.per_source, args.seed, args.device, args.summary_only,
+                transformer=args.transformer,
+            )
         )
         return
     values = {f.name: getattr(args, f.name) for f in dataclasses.fields(Config)}

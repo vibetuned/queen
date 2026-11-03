@@ -31,7 +31,9 @@ from safetensors.torch import load_file, save_file
 from queen.loading import DTYPE, build_checked
 
 PHASES = ("refs", "ctx", "denoise", "decode")
-CHECKPOINTS = Path("/data/checkpoints")
+# Data root: /data on our EC2 boxes; set QUEEN_DATA on machines without it (RTX 5090 box, DGX Spark).
+DATA = Path(os.environ.get("QUEEN_DATA", "/data"))
+CHECKPOINTS = DATA / "checkpoints"
 
 
 @dataclass
