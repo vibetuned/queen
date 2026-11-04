@@ -45,7 +45,7 @@ def load(root: Path) -> list[Clip]:
                 source="ravdess",
                 split="test",
                 transcript=f["text"],
-                prompt=real_prompt(f"adult, {f['gender']}", f["emotion"], f["intensity"], f["text"]),
+                prompt=real_prompt(f"young adult, american, {f['gender']}", f["emotion"], f["intensity"], f["text"]),
                 emotion=f["emotion"],
                 intensity=f["intensity"],
                 meta={"repetition": f["repetition"]},

@@ -39,6 +39,13 @@ queen-direct = "queen.directions:main"
 queen-selfgen = "queen.selfgen:main"
 queen-render = "queen.render:main"
 queen-train = "queen.train:main"
+queen-judge = "queen.judge:main"
+
+[project.optional-dependencies]
+judge = [
+    "funasr>=1.4",
+    "librosa>=0.10",
+]
 
 [dependency-groups]
 dev = [

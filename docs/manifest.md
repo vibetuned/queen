@@ -68,7 +68,15 @@ Real recordings get prompts in exactly lnvox's format (`queen.manifest.format_pr
 `lnvox.stages.s3_director.format_prompt`): `"<descriptor>, <cue>"`, lowercased, commas → `" - "`, in
 parentheses, then the quoted text. The cue comes from `EMOTION_CUES`; `strong` intensity adds "very".
 
-    (adult - male - angry - raised voice) "Their forces were already moving into the north country."
+    (adult - american - male - angry - raised voice) "Their forces were already moving into the north country."
+
+The descriptor is corpus-level, in the vocabulary of the lnvox descriptors (`young adult` / `adult`,
+`american`, `male` / `female`), because the datasets carry no per-speaker age or accent:
+EmoV-DB "North American English" speakers → `adult, american`; IEMOCAP USC actors → `adult, american`
+(ages unverified, so not `young adult`); RAVDESS "neutral North American accent", actors 21–33 →
+`young adult, american`. Before 2026-11-03 (`real-v1`, `mix-v1`, `mix-v2`) real prompts had only
+`adult, <sex>`, so age and accent appeared only with synthetic voices — a confound `mix-v3` removes
+(same clips, splits and pairs as `mix-v2`; only the real-data prompts differ; 12,885 new text features).
 
 ## Render contract (lnvox → queen)
 

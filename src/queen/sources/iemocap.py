@@ -87,7 +87,7 @@ def load(root: Path) -> list[Clip]:
                 source="iemocap",
                 split="test" if session == TEST_SESSION else "train",
                 transcript=text,
-                prompt=real_prompt(f"adult, {gender}", emotion, intensity, text, cues) if text else None,
+                prompt=real_prompt(f"adult, american, {gender}", emotion, intensity, text, cues) if text else None,
                 emotion=emotion,
                 intensity=intensity,
                 meta={

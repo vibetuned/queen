@@ -70,17 +70,19 @@ Tested on AWS g7 (RTX PRO 4500 Blackwell 32 GB, driver 595, CUDA 13.2). Same ste
    `checkpoints/`, `runs/`, `archives/` under it (default `/data`).
    ```bash
    export QUEEN_DATA=$HOME/queen-data   # omit where /data exists; put it in ~/.bashrc
-   scripts/inference_bundle.sh download s3://lab-datasets-eu-west-3/test_model/queen/inference-lora-v1 lora-v1
-   uv run queen-stage plan items.jsonl $QUEEN_DATA/runs/demo --lora $QUEEN_DATA/runs/lora-v1/lora_step_05034.safetensors
+   scripts/inference_bundle.sh download s3://lab-datasets-eu-west-3/test_model/queen/inference-lora-v1 lora-v1 lora-v2 lora-v1-v2
+   uv run queen-stage plan items.jsonl $QUEEN_DATA/runs/demo --lora $QUEEN_DATA/runs/lora-v2/lora_step_05034.safetensors
    uv run queen-stage run $QUEEN_DATA/runs/demo && uv run queen-eval $QUEEN_DATA/runs/demo
    ```
    Only the inference path honours `QUEEN_DATA`; manifests, caches and the dataset tools still assume `/data`
    (their files carry absolute `/data/...` paths).
-   The bundle (~36 GB) is the extracted audio DiT (9.9 GB), Gemma 4 12B text encoder with projections
-   (25 GB), audio VAE, duration head — keys mirror `/data`, with `.sha256` sidecars — plus
-   `runs-lora-v1.tar.zst` (LoRA steps 3500 + 5034, `config.json`, `log.jsonl`, and the eval runs
-   `eval-base`, `eval-lora-v1-3500`, `eval-lora-v1` with wavs, refs, transcripts). Publish from the training
-   box with `scripts/inference_bundle.sh pack lora-v1` then `upload <prefix> lora-v1` (needs AWS
-   credentials). Limits: the ctx phase loads Gemma in bf16 → ~26 GB GPU and ~27 GB host RAM; a 24 GB card
+   One prefix holds the weights once (~36 GB: extracted audio DiT 9.9 GB, Gemma 4 12B text encoder with
+   projections 25 GB, audio VAE, duration head — keys mirror the data root, `.sha256` sidecars) plus one
+   `runs-<run>.tar.zst` per training run (shipped checkpoints, `config.json`, `log.jsonl`, and the eval
+   runs with wavs, refs, transcripts; ~0.5–0.65 GB for a LoRA run, ~11 GB for a full fine-tune). The
+   README in the prefix lists the runs and the `--lora` / `--transformer` flag for each. Publish from the
+   training box: `scripts/inference_bundle.sh pack <run>...` stages into `/data/archives/inference/`, then
+   `upload <prefix> [<run>...]` (needs AWS credentials; weights already in S3 with the same size are
+   skipped). New runs need a `KEEP_STEPS` entry at the top of the script. Limits: the ctx phase loads Gemma in bf16 → ~26 GB GPU and ~27 GB host RAM; a 24 GB card
    can only run denoise + decode on text features cached elsewhere. The eval runs contain IEMOCAP clips:
    keep the prefix private.

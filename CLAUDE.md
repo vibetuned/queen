@@ -126,18 +126,49 @@ ranges instead (13 s, 0.7 GB RSS).
   flat (~0.63). **Final checkpoint (5034)**: WER ≤ 0.2 on 100 % of items, sim own 0.94 / 0.85 / 0.62 /
   0.86 → ship `/data/runs/lora-v1/lora_step_05034.safetensors`. Listening test: good. Tables in
   `docs/training.md`. `runs/` symlink in the repo → `/data/runs` to browse `eval-*/wav/`.
-- 2026-11-03 — **Inference bundle** (`scripts/inference_bundle.sh pack|upload|download`, `docs/setup.md`
-  §9): the four safetensors `queen-stage` needs (~36 GB, no dev transformer) + `runs-lora-v1.tar.zst`
-  (LoRA 3500 + 5034, evals with wavs) → `s3://lab-datasets-eu-west-3/test_model/queen/inference-lora-v1/`.
+- 2026-11-03 — **Inference bundle** (`scripts/inference_bundle.sh pack|upload|download <run>...`, `docs/setup.md`
+  §9): the four safetensors `queen-stage` needs (~36 GB, no dev transformer, uploaded once) + one
+  `runs-<run>.tar.zst` per training run (shipped checkpoints, evals with wavs; `KEEP_STEPS` in the script
+  says which steps) → `s3://lab-datasets-eu-west-3/test_model/queen/inference-lora-v1/` (prefix name is
+  historical; it holds lora-v1, lora-v2, lora-v1-v2, later full-v2). Staging dir `/data/archives/inference/`.
   Gemma still needs ~26 GB GPU / 27 GB host RAM for the ctx phase (the g7 is fine; a 24 GB card is not).
-- 2026-11-03 — **Full fine-tune started**: `queen-train run --full true` (all 3.29B DiT params, fp32 masters +
-  bf16 autocast, 69 GB GPU; checkpoints are drop-in extracted-layout transformers → `queen-stage plan
-  --transformer`, `queen-train eval --transformer`). Run `full-v1` (`/data/runs/full-v1`, log
-  `/data/logs/full-v1.log`, ends "full-v1 train done"): lr 1e-5, 3 epochs, same recipe as lora-v1 otherwise.
-- Next: when full-v1 ends, `queen-train eval … --transformer /data/runs/full-v1/transformer_step_05034.safetensors
-  --per-source 50` → compare with lora-v1 (`docs/training.md`); emotion / naturalness judge; long targets
-  (> 10 s) and the no-reference path. `docs/handoff.md` still lists the open items (IEMOCAP release form,
-  emotion judge).
+- 2026-11-03 — **Full fine-tune mode built** (`queen-train run --full true`: all 3.29B DiT params, fp32 masters +
+  bf16 autocast, 69 GB GPU, 4.4 samples/s; checkpoints are drop-in extracted-layout transformers →
+  `queen-stage plan --transformer`, `queen-train eval --transformer`). Run `full-v1` stopped at step 580 (no
+  checkpoint) — not worth running on the old prompts.
+- 2026-11-03 — **Prompt fix**: real-data prompts had only `adult - <sex>` while synthetic ones carried age /
+  accent / voice quality, so a rich descriptor implied a synthetic voice. Adapters now emit corpus-level
+  `adult - american` (EmoV-DB, IEMOCAP) / `young adult - american` (RAVDESS) (`docs/manifest.md`).
+  `/data/manifests/mix-v3` = mix-v2 clips/splits/pairs with the new prompts (QC + latents reused via
+  hardlinks). **Chain running** (`/data/logs/lora-v2-chain.{sh,log}`, ends "lora-v2 chain done", ~8 h):
+  text cache → `lora-v2` (lora-v1 recipe) → evals `eval-lora-v2`, `eval-lora-v1-v3`, `eval-base-v3`.
+  Queued behind it: **`lora-v1-v2`** curriculum test (`/data/logs/lora-v1-v2-chain.{sh,log}`, ends
+  "lora-v1-v2 chain done"): `--init-lora` lora-v1 final, 1 epoch on mix-v3 at lr 5e-5 → `eval-lora-v1-v2`.
+  Then **`full-v2`** (`/data/logs/full-v2-chain.{sh,log}`, ends "full-v2 chain done"): full fine-tune on
+  mix-v3, lr 1e-5, 3 epochs → `eval-full-v2`. Whole queue ≈ 16 h, done ~15:00 UTC 2026-11-04.
+- 2026-11-04 — **mix-v3 results** (`docs/training.md`): the prompt fix changes nothing measurable (base-v3 =
+  base; lora-v1 on new prompts = lora-v1), and lora-v2 (3 epochs from scratch, 5.7 h) ≈ lora-v1-v2 (lora-v1 +
+  1 epoch at lr 5e-5, 1.9 h) ≈ lora-v1: WER ≤ 0.01 everywhere, 0 babbles / 200, sim own 0.94 / 0.86 / 0.62 /
+  0.86 within ±0.01. Continuation training is non-destructive and matches from-scratch at 1/3 compute, but WER
+  + WavLM are at ceiling — ranking needs an emotion / naturalness judge. `full-v2` running (started 08:46 UTC,
+  ~14:30 UTC done incl. eval).
+- 2026-11-04 — **Judge stack reviewed** (`queen/evaluator.py`, user's code; `uv sync --extra judge`): UTMOS +
+  emotion2vec+ work (smoke test on lora-v2 wavs: an "angry" cue came out happy — the signal we need); Gemma 4
+  12B-it audio judge exists and is ungated, untested until the GPU is free. Details `docs/training.md` §5.
+- 2026-11-04 — **`queen-judge` built** (`queen/judge.py`, `docs/training.md` §5): `score` (UTMOS + emotion2vec+
+  vs the real target recording and the cue emotion, staged one model at a time) and `compare` (Gemma 4 12B-it
+  pairwise, both orders, resumable). `evaluator.py` split into one class per model.
+  Gemma template verified on CPU; GPU comparisons queued behind full-v2 (`/data/logs/judge-chain.{sh,log}`,
+  ends "judge chain done": score eval-full-v2 + 4 run-pair comparisons).
+- 2026-11-04 — **Judge scores** (`docs/training.md`): MOS base 3.24 → fine-tuned 3.75 (real recordings 3.29);
+  emotion2vec cue accuracy base 0.33 → lora-v1 0.48 / lora-v1-v2 0.50 / lora-v2 0.51, ceiling on real
+  recordings 0.60. RAVDESS is the emotion benchmark (real 1.00, lora-v2 0.60): fear / disgust / surprise are
+  the undelivered emotions; anger, joy, sadness, calm land. Runs ordered lora-v2 ≥ lora-v1-v2 ≥ lora-v1 but
+  within noise at n = 50 — Gemma pairwise pending.
+- Next: read `eval-full-v2` and the Gemma comparisons; pick the weights to ship; then target fear / disgust /
+  surprise (data: RAVDESS is test-only, EmoV-DB has no fear/surprise, DramaBox renders carry them weakly);
+  re-pack the inference bundle with the chosen weights; decide on a full fine-tune on mix-v3; emotion / naturalness judge; long targets (> 10 s)
+  and the no-reference path. `docs/handoff.md` still lists the open items (IEMOCAP release form, emotion judge).
 
 ## Data licensing constraints (checked 2026-10-30)
 

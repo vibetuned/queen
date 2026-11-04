@@ -53,7 +53,7 @@ def load(root: Path, arctic_path: Path) -> list[Clip]:
                     source="emovdb",
                     split="train",
                     transcript=text,
-                    prompt=real_prompt(f"adult, {GENDER[speaker]}", emotion, None, text),
+                    prompt=real_prompt(f"adult, american, {GENDER[speaker]}", emotion, None, text),
                     emotion=emotion,
                     meta=meta,
                 )

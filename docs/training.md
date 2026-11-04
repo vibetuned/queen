@@ -46,9 +46,65 @@
     tables equal after bf16 rounding); a 3-step smoke checkpoint generates through `queen-stage`.
     Smoke: 69 GB GPU, 2.9–3.8 samples/s on 11–12 s targets, checkpoint write 46 s (10.6 GB) + 26 s
     resume state (39 GB: fp32 weights + Adam).
-  - **Run `full-v1` started 2026-11-03 22:34 UTC** (`/data/runs/full-v1`, `/data/logs/full-v1.log`):
-    `--full true --lr 1e-5 --epochs 3 --save-every 1000 --val-every 500`, otherwise the lora-v1 recipe
-    (same data order, seed, σ sampler, dropouts) so the comparison is LoRA vs full only.
+  - **Run `full-v1`** (`/data/runs/full-v1`, `/data/logs/full-v1.log`): `--full true --lr 1e-5 --epochs 3
+    --save-every 1000 --val-every 500`, otherwise the lora-v1 recipe. Started 22:34 UTC, 4.2–4.5 samples/s
+    (ETA 5.2 h), loss 0.62 → 0.56 by step 580. **Stopped at step 580 by the user**: the real-data prompts
+    carried no accent/age (next item), so a full run on those cues was not worth the GPU time. No
+    checkpoint was written (first at 1000). Rerun later on `mix-v3` if the LoRA leaves quality on the table.
+  - **Prompt fix → `mix-v3` + `lora-v2` chain** (`/data/logs/lora-v2-chain.sh`, log `lora-v2-chain.log`,
+    ends "lora-v2 chain done"). Real-data prompts gained `american` and (RAVDESS) `young adult`
+    (`docs/manifest.md`); synthetic prompts already had age/accent/voice, so in mix-v2 a rich descriptor
+    implied a synthetic voice. mix-v3 = same clips/splits/pairs as mix-v2. Chain: `queen-cache` (12,885 new
+    text features) → `queen-train run … /data/runs/lora-v2` (lora-v1 recipe) → evals on mix-v3 test items:
+    `eval-lora-v2`, `eval-lora-v1-v3` (lora-v1 with the new prompts), `eval-base-v3`. Compare the three
+    with each other and with the mix-v2 tables above.
+  - **Curriculum test `lora-v1-v2`** (`/data/logs/lora-v1-v2-chain.{sh,log}`, ends "lora-v1-v2 chain done";
+    waits for the lora-v2 chain): `queen-train run … --init-lora lora-v1/lora_step_05034.safetensors
+    --epochs 1 --lr 5e-5 --warmup-steps 100` on mix-v3, fresh optimizer; eval `eval-lora-v1-v2`.
+    Question: is a second, shorter pass on the corrected prompts additive — does 3 + 1 epochs from lora-v1
+    match or beat lora-v2's 3 epochs from scratch at a third of the compute? `--init-lora` loads a saved
+    ComfyUI-layout adapter back into peft (round trip checked: lora-v1 → model → file is tensor-identical).
+  - **Results 2026-11-04** (mix-v3 test items, 50 per source, seed 10; "≥1" = babbled items of 50):
+
+    | run | training | dramabox WER / sim | iemocap WER / sim | ltxself WER / sim | ravdess WER / sim | ≥1 total |
+    |---|---|---|---|---|---|---|
+    | base-v3 | none | 0.304 / 0.799 | 1.006 / 0.742 | 0.128 / 0.604 | 0.520 / 0.665 | 61 |
+    | lora-v1-v3 | 3 ep, old prompts | 0.006 / 0.938 | 0.009 / 0.854 | 0.003 / 0.622 | 0.000 / 0.854 | 0 |
+    | lora-v2 | 3 ep, new prompts (5.7 h, val 0.612) | 0.008 / 0.935 | 0.009 / 0.860 | 0.001 / 0.611 | 0.000 / 0.866 | 0 |
+    | lora-v1-v2 | lora-v1 + 1 ep new prompts, lr 5e-5 (1.9 h, val 0.611) | 0.008 / 0.944 | 0.010 / 0.856 | 0.001 / 0.618 | 0.000 / 0.853 | 0 |
+
+    Reading: (1) the prompt change alone does nothing measurable — base-v3 equals base, and lora-v1 reads
+    the new descriptors exactly as well as the old ones, so the feared "rich descriptor ⇒ synthetic voice"
+    gate does not show in WER or WavLM; (2) lora-v2 and lora-v1-v2 are within noise of lora-v1 (±0.01 sim,
+    ±0.003 WER) — **the continuation is at least non-destructive and reaches lora-v2's level at a third of
+    the compute**, but these metrics are at ceiling and cannot rank the three; the first 500-step val loss
+    of lora-v1-v2 (0.6129) was already below lora-v1's final (0.6142), so the lr restart at 5e-5 did not
+    disturb the adapter. Ranking needs the emotion / naturalness judge, or listening. Mid-run checkpoints
+    of lora-v2 are not evaluated.
+  - **Judge scores 2026-11-04** (`queen-judge score`, same 200 items; MOS = UTMOS22; "emo acc" = emotion2vec
+    label equals the cue emotion over the 184 items whose cue maps to an e2v class; "real" = the real target
+    recording; "emo sim" = e2v embedding cosine generated ↔ real):
+
+    | run | MOS | emo acc all | emo acc ravdess | emo acc iemocap | emo sim |
+    |---|---|---|---|---|---|
+    | real recordings | 3.29 | 0.60 | 1.00 | 0.62 | — |
+    | base-v3 | 3.24 | 0.33 | 0.26 | 0.35 | 0.866 |
+    | lora-v1 (mix-v2 prompts) | 3.73 | 0.48 | 0.54 | 0.53 | 0.903 |
+    | lora-v1-v3 | 3.76 | 0.47 | 0.50 | 0.50 | 0.908 |
+    | lora-v2 | 3.75 | **0.51** | **0.60** | 0.53 | **0.912** |
+    | lora-v1-v2 | 3.73 | 0.50 | 0.58 | **0.56** | 0.910 |
+
+    Reading: fine-tuning lifts MOS 3.24 → 3.75 (above the real recordings: IEMOCAP's are noisy dyadic takes
+    at 2.65) and emotion accuracy 0.33 → ~0.5, against a classifier ceiling of 0.60 on the real recordings.
+    **RAVDESS is the emotion benchmark**: acted, e2v recognises the real takes at 1.00, the model delivers the
+    cue in 0.60 (lora-v2) — the headroom WER/WavLM could not show. lora-v2 ≥ lora-v1-v2 ≥ lora-v1 by 0.02–0.06
+    on emotion, within ±0.07 noise at n = 50 but consistently ordered; Gemma pairwise (`judge-chain`) decides.
+    Misses on RAVDESS (lora-v2): fear → sad 6, disgust → angry 6, surprise → angry 4 — fear, disgust and
+    surprise are the undelivered emotions; anger, joy, sadness, calm land. 16 IEMOCAP items have no mappable
+    cue (unlabelled / "other") and are excluded from accuracy.
+  - **Full fine-tune `full-v2`** on mix-v3 (`/data/logs/full-v2-chain.{sh,log}`, ends "full-v2 chain done";
+    waits for the lora-v1-v2 chain): `--full true --lr 1e-5 --epochs 3 --save-every 1000`, ~5.2 h + eval
+    `eval-full-v2` (via `--transformer`). Answers the question full-v1 was started for, on the corrected prompts.
   - **Inference bundle for smaller machines** (`scripts/inference_bundle.sh`, `docs/setup.md` §9):
     extracted audio DiT + Gemma text encoder + audio VAE + duration head (~36 GB, no 42 GB dev transformer)
     and `runs-lora-v1.tar.zst` (LoRA steps 3500 + 5034, config, log, the three eval runs with wavs).
@@ -160,7 +216,32 @@ extracted-checkpoint layout, so it is a drop-in `--transformer-path`.
   audio, `text` = target prompt, `duration` = target duration, fixed seed → `queen-stage run --lora` →
   `queen-eval` (WER + WavLM similarity to the reference) → table per source. Run it once with **no
   LoRA first**: that is the baseline the zero-shot numbers in `docs/staged.md` only sketched.
-- Emotion: no judge yet (`handoff.md` §3); report prosody later.
+- **Judge stack** (`queen/evaluator.py`, the user's `TTSEvaluator`; deps in the `judge` extra:
+  `uv sync --extra judge` → funasr 1.4.21, librosa 1.0, modelscope; no existing pin changes): UTMOS22-strong
+  (predicted MOS 1–5, torch.hub `tarepan/SpeechMOS`), emotion2vec+ large (9 labels angry / disgusted /
+  fearful / happy / neutral / other / sad / surprised / unk + 1024-d embedding; HF `emotion2vec/
+  emotion2vec_plus_large`, 7 s load, ~1.4 GB GPU, rtf 0.003) and Gemma 4 12B-it as a pairwise audio judge
+  (`google/gemma-4-12B-it`, ungated, `Gemma4UnifiedForConditionalGeneration` with `audio_config`; ~25 GB,
+  both clip orders, consensus). Smoke-tested 2026-11-04 on lora-v2 wavs: MOS 3.4–3.7; e2v flagged an
+  "angry" cue rendered as happy (0.59) while sad / fearful cues landed at 1.00 — the discrimination WER +
+  WavLM lack. `queen/evaluator.py` holds one class per model (`NaturalnessScorer`, `EmotionScorer`,
+  `ProsodyJudge`; `TTSEvaluator` keeps the original API, loading lazily) and **`queen-judge`** runs them
+  as staged passes over eval run dirs:
+  ```bash
+  uv run queen-judge score   /data/runs/eval-lora-v2 /data/runs/eval-base-v3 ...   # -> RUN/judge.json (UTMOS, then e2v)
+  uv run queen-judge compare /data/runs/eval-lora-v2 /data/runs/eval-lora-v1-v3    # -> RUN_A/judge-vs-RUN_B.json (Gemma, resumable)
+  uv run queen-judge summary /data/runs/eval-*                                      # tables from existing judge*.json
+  ```
+  `score` measures every clip against the **real target recording** of its item (same words, same labelled
+  emotion): MOS of both; e2v label of both vs the cue emotion (`CUE_TO_E2V`: joy/amused/excited → happy,
+  anger/frustrated → angry, calm → neutral, sleepy/other excluded), where the real recording's agreement is
+  the ceiling the classifier allows; and e2v embedding cosine generated ↔ real. `compare` feeds Gemma the
+  quoted text as transcript and the parenthesised cue as direction, both clip orders, consensus A / B /
+  Tie / Positional. `--manifest` (default mix-v3) supplies the target clips; mix-v2 runs work too (same pairs).
+  Gemma template verified on CPU (two audio clips in one user turn, answer starts with the JSON fence; 33 s
+  load, 24 s per pass for 4 tokens on CPU). GPU comparisons are queued in `/data/logs/judge-chain.{sh,log}`
+  (ends "judge chain done", after full-v2): score `eval-full-v2`, then lora-v2 vs lora-v1-v3, lora-v1-v2 vs
+  lora-v2, full-v2 vs lora-v2, lora-v2 vs base-v3.
 
 ## 6. Checks before the first real run
 
@@ -182,6 +263,8 @@ uv run queen-train eval /data/manifests/mix-v2 /data/runs/eval-05000 --lora /dat
 #   -> OUT/items.jsonl, staged run (refs/ctx/latents/wav), eval.json, summary.json (per source: WER mean/median,
 #      share ≤ 0.2, WavLM sim to own ref vs others). Without --lora: the base-model baseline.
 uv run queen-stage plan items.jsonl out --lora PATH[:STRENGTH]     # any staged run can use the adapter
+uv run queen-train run  /data/manifests/mix-v3 /data/runs/lora-v1-v2 --init-lora /data/runs/lora-v1/lora_step_05034.safetensors --epochs 1 --lr 5e-5
+#   continue a saved adapter (same rank) with a fresh optimizer / schedule
 uv run queen-train run  /data/manifests/mix-v2 /data/runs/full-v1 --full true --lr 1e-5 --save-every 1000
 #   -> OUT/transformer_step_NNNNN.safetensors (drop-in for the extracted checkpoint); OUT/state_latest.pt is 39 GB
 uv run queen-train eval /data/manifests/mix-v2 /data/runs/eval-full-v1 --transformer /data/runs/full-v1/transformer_step_05034.safetensors

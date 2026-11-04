@@ -28,7 +28,7 @@ def test_ravdess_load_is_test_only(tmp_path: Path) -> None:
     _wav(tmp_path / "Actor_03/03-01-01-01-02-01-03.wav")
     (clip,) = ravdess.load(tmp_path)
     assert clip.split == "test" and clip.speaker == "ravdess:03"
-    assert clip.prompt == '(adult - male - neutral - even tone) "Dogs are sitting by the door."'
+    assert clip.prompt == '(young adult - american - male - neutral - even tone) "Dogs are sitting by the door."'
 
 
 def test_emovdb_load(tmp_path: Path) -> None:
@@ -44,7 +44,7 @@ def test_emovdb_load(tmp_path: Path) -> None:
     angry = clips["emovdb-sam-angry-1-28-0011"]
     assert angry.transcript == "Hello there." and angry.emotion == "anger" and angry.speaker == "emovdb:sam"
     assert angry.duration == pytest.approx(2.5)
-    assert angry.prompt == '(adult - male - angry - raised voice) "Hello there."'
+    assert angry.prompt == '(adult - american - male - angry - raised voice) "Hello there."'
     assert "range_mismatch" not in angry.meta
     assert clips["emovdb-sam-angry-29-56-0011"].meta["range_mismatch"] is True
 
@@ -110,8 +110,8 @@ def test_iemocap_load_from_parquet(tmp_path: Path) -> None:
     angry = clips["iemocap-Ses01F_impro01_F000"]
     assert angry.speaker == "iemocap:Ses01F" and angry.split == "train" and angry.duration == pytest.approx(2.0)
     assert angry.transcript == "You did." and angry.emotion == "anger" and angry.intensity == "strong"
-    assert angry.prompt == '(adult - female - very angry - raised voice - laughing) "You did."'
+    assert angry.prompt == '(adult - american - female - very angry - raised voice - laughing) "You did."'
     low = clips["iemocap-Ses01F_impro01_M001"]
-    assert low.speaker == "iemocap:Ses01M" and low.emotion is None and low.prompt == '(adult - male) "Fine."'
+    assert low.speaker == "iemocap:Ses01M" and low.emotion is None and low.prompt == '(adult - american - male) "Fine."'
     assert clips["iemocap-Ses05M_script01_F002"].split == "test"
     assert (tmp_path / "wav/Ses05M_script01_F002.wav").exists()

@@ -80,6 +80,7 @@ class Config:
     limit: int | None = None  # train on the first N train pairs only (overfit checks)
     gradient_checkpointing: bool = False  # 2.4x slower (602 vs 246 ms/sample on the g7e), saves ~6 GB of 14
     full: bool = False  # fine-tune all DiT params (no LoRA; rank/alpha ignored; use a lower lr, e.g. 1e-5)
+    init_lora: str = ""  # continue from a queen-train LoRA file (same rank); fresh optimizer and schedule
 
 
 # ----- timestep sampler (ltx_trainer.timestep_samplers.ShiftedLogitNormalTimestepSampler, LTX-2 v1.5.0) -----
@@ -265,6 +266,22 @@ def lora_state_dict(model: torch.nn.Module) -> dict[str, torch.Tensor]:
     return {"diffusion_model." + k.replace("base_model.model.", "", 1): v.detach().to(DTYPE).contiguous() for k, v in sd.items()}
 
 
+def load_lora_into(model: torch.nn.Module, path: str) -> int:
+    """Inverse of ``lora_state_dict``: load a saved ComfyUI-layout adapter into the peft model. Returns the
+    number of tensors loaded; every tensor in the file must match a LoRA parameter."""
+    from peft import set_peft_model_state_dict
+
+    sd = load_file(path)
+    peft_sd = {"base_model.model." + k.removeprefix("diffusion_model."): v.float() for k, v in sd.items()}
+    result = set_peft_model_state_dict(model, peft_sd)
+    if result.unexpected_keys:
+        raise RuntimeError(f"{len(result.unexpected_keys)} keys in {path} match no LoRA parameter: {result.unexpected_keys[:3]}")
+    n_lora = sum(1 for k in model.state_dict() if "lora_" in k)
+    if len(peft_sd) != n_lora:
+        raise RuntimeError(f"{path} has {len(peft_sd)} LoRA tensors, model has {n_lora} (rank mismatch?)")
+    return len(peft_sd)
+
+
 def save_lora(model: torch.nn.Module, path: Path, metadata: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
@@ -371,6 +388,8 @@ def train(cfg: Config, device: torch.device) -> None:
     dit = build_dit(cfg.transformer, device)
     dit.set_gradient_checkpointing(cfg.gradient_checkpointing)
     model = prepare_full(dit) if cfg.full else add_lora(dit, cfg)
+    if cfg.init_lora and not cfg.full:
+        print(f"init from {cfg.init_lora}: {load_lora_into(model, cfg.init_lora)} LoRA tensors", flush=True)
     params = [p for p in model.parameters() if p.requires_grad]
     print(f"trainable params {sum(p.numel() for p in params) / 1e6:.1f}M ({'full' if cfg.full else 'LoRA'})", flush=True)
     opt = torch.optim.AdamW(params, lr=cfg.lr, betas=cfg.betas, weight_decay=cfg.weight_decay, fused=cfg.full)
