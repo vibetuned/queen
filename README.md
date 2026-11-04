@@ -11,7 +11,7 @@ in-context on clean reference speech latents (DramaBox-style).
 - LLM direction pass (lnvox director on DeepDialogue): [docs/directions.md](docs/directions.md)
 - LTX self-generated long takes split into sentence pairs: [docs/ltx-selfgen.md](docs/ltx-selfgen.md)
 - DramaBox renders of directed lines in voicebank voices: [docs/dramabox-renders.md](docs/dramabox-renders.md)
-- Current state and next steps after the g7 → g7e move: [docs/handoff.md](docs/handoff.md)
+- Current state and next steps after the g7e → g7 / RTX 5090 move: [docs/handoff.md](docs/handoff.md)
 
 ```bash
 uv sync

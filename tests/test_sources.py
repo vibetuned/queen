@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from queen.sources import emovdb, ravdess, renders, voicebank
+from queen.sources import cremad, emovdb, mead, ravdess, renders, voicebank
 
 
 def _wav(path: Path, seconds: float = 3.0) -> Path:
@@ -115,3 +115,42 @@ def test_iemocap_load_from_parquet(tmp_path: Path) -> None:
     assert low.speaker == "iemocap:Ses01M" and low.emotion is None and low.prompt == '(adult - american - male) "Fine."'
     assert clips["iemocap-Ses05M_script01_F002"].split == "test"
     assert (tmp_path / "wav/Ses05M_script01_F002.wav").exists()
+
+
+def test_mead_load_uses_emofi_splits(tmp_path: Path) -> None:
+    splits = tmp_path / "features/MEAD_v23"
+    splits.mkdir(parents=True)
+    (splits / "train.txt").write_text("M003_angry_level1_001|M003|{AH0}|hello there.\n", encoding="utf-8")
+    (splits / "val.txt").write_text("", encoding="utf-8")
+    (splits / "test.txt").write_text("W033_fear_level3_002|W033|{AH0}|run.\nW033_sad_level2_004|W033|{AH0}|from the list.\n", encoding="utf-8")
+    for stem, text in (("M003_angry_level1_001", "Hello there."), ("W033_fear_level3_002", "run."), ("W033_neutral_level1_003", ""), ("W033_sad_level2_004", None), ("W033_happy_level1_005", None)):
+        _wav(tmp_path / f"MEAD_processed/{stem}.wav")
+        if text is not None:
+            (tmp_path / f"MEAD_processed/{stem}_CorrectedTranscript.txt").write_text(text, encoding="utf-8")
+    a, b, c = mead.load(tmp_path)  # empty transcript skipped; no transcript and not in a list skipped
+    assert a.id == "mead-M003_angry_level1_001" and a.split == "train" and a.speaker == "mead:M003"
+    assert a.prompt == '(adult - male - angry - raised voice) "Hello there."' and a.intensity == "normal"
+    assert b.split == "test" and b.emotion == "fear" and b.intensity == "strong"
+    assert b.meta == {"level": 3, "number": 2, "transcript": "corrected"}
+    assert b.prompt == '(adult - female - very fearful - trembling) "run."'
+    assert c.transcript == "from the list." and c.meta["transcript"] == "list" and c.emotion == "sadness"
+    with pytest.raises(ValueError, match="emotion"):
+        mead.parse_name("M003_contempt_level1_001.wav")
+
+
+def test_cremad_load(tmp_path: Path) -> None:
+    repo = tmp_path / "repo/processedResults"
+    repo.mkdir(parents=True)
+    (tmp_path / "repo/VideoDemographics.csv").write_text('"ActorID","Age","Sex","Race","Ethnicity"\n1001,51,"Male","Caucasian","Not Hispanic"\n1002,21,"Female","Asian","Not Hispanic"\n', encoding="utf-8")
+    (repo / "summaryTable.csv").write_text('"","FileName","VoiceVote","VoiceLevel","FaceVote","FaceLevel","MultiModalVote","MultiModalLevel"\n"1","1001_IEO_DIS_HI","D:N","60","D","70","D","65"\n"2","1002_DFA_FEA_XX","S","55","F","70","F","65"\n', encoding="utf-8")
+    _wav(tmp_path / "AudioWAV/1001_IEO_DIS_HI.wav")
+    _wav(tmp_path / "AudioWAV/1002_DFA_FEA_XX.wav")
+    a, b = cremad.load(tmp_path)
+    assert a.id == "cremad-1001_IEO_DIS_HI" and a.speaker == "cremad:1001" and a.split is None
+    assert a.prompt == '(middle-aged - american - male - very disgusted) "It\'s eleven o\'clock."'
+    assert a.meta == {"sentence": "IEO", "level": "high", "age": 51, "voice_vote": "D:N", "voice_agree": True}
+    assert b.emotion == "fear" and b.intensity == "normal" and b.meta["voice_agree"] is False
+    assert b.prompt.startswith("(young adult - american - female - fearful - trembling)")
+    assert [c.id for c in cremad.load(tmp_path, voice_agree_only=True)] == [a.id]
+    with pytest.raises(ValueError, match="file name"):
+        cremad.parse_name("1001_IEO_CON_HI.wav")

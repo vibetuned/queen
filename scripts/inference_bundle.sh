@@ -35,6 +35,8 @@ declare -A KEEP_STEPS=(
     [lora-v2]="05034"         # 3 epochs on mix-v3 (prompts with accent/age)
     [lora-v1-v2]="01678"      # lora-v1 + 1 epoch on mix-v3
     [full-v2]="05034"         # full fine-tune on mix-v3 (10.6 GB transformer)
+    [lora-v3]="02520"         # lora-v2 + 1 epoch on mix-v4 (+ MEAD) — the shipped adapter as of 2026-11-04
+    [lora-v4]="02730"         # lora-v2 + 1 epoch on mix-v5 (+ MEAD + CREMA-D), not shipped
 )
 
 cmd="${1:?usage: $0 pack|upload|download ...}"

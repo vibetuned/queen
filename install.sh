@@ -115,8 +115,11 @@ phase_restore() {
     tail -n1 /data/logs/restore-weights.log /data/logs/restore-unpack.log
 
     echo "== checks =="
-    if [[ -d /data/manifests/mix-v2 ]]; then
-        echo "cache files (expect 59132): $(find /data/manifests/mix-v2/cache -type f | wc -l)"
+    if [[ -d /data/manifests/mix-v5 ]]; then
+        echo "mix-v5 cache files (expect 95194): $(find /data/manifests/mix-v5/cache -type f | wc -l)"
+        uv run --no-sync queen-manifest stats /data/manifests/mix-v5 | head -20
+    elif [[ -d /data/manifests/mix-v2 ]]; then
+        echo "mix-v2 cache files (expect 59132): $(find /data/manifests/mix-v2/cache -type f | wc -l)"
         uv run --no-sync queen-manifest stats /data/manifests/mix-v2 | head -20
     fi
     uv run --no-sync pytest -q

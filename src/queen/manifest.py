@@ -44,6 +44,8 @@ SOURCES = {
     "emovdb": SourcePolicy(("emov-db-noncommercial",), False, True, True, "cite Adigwe et al. 2018"),
     "iemocap": SourcePolicy(("iemocap-research",), False, True, False, "releasing weights needs USC permission"),
     "ravdess": SourcePolicy(("cc-by-nc-sa-4.0",), False, False, False, "eval only: ShareAlike vs LTX-2 license"),
+    "mead": SourcePolicy(("mead-research",), False, True, True, "non-commercial research; never redistribute the clips"),
+    "cremad": SourcePolicy(("odbl-1.0", "dbcl-1.0"), False, True, True, "attribution notice (ODbL produced work)"),
 }
 
 # Canonical emotions: lnvox's director vocabulary plus the extra classes real corpora label.
@@ -329,7 +331,7 @@ def read_manifest(root: Path) -> tuple[list[Clip], list[Pair]]:
 
 
 def _cmd_build(args: argparse.Namespace) -> None:
-    from queen.sources import emovdb, iemocap, ltxself, ravdess, renders, voicebank
+    from queen.sources import cremad, emovdb, iemocap, ltxself, mead, ravdess, renders, voicebank
 
     clips: list[Clip] = []
     if args.voicebank:
@@ -349,6 +351,10 @@ def _cmd_build(args: argparse.Namespace) -> None:
         clips += ravdess.load(args.ravdess)
     if args.iemocap:
         clips += iemocap.load(args.iemocap)
+    if args.mead:
+        clips += mead.load(args.mead)
+    if args.cremad:
+        clips += cremad.load(args.cremad, voice_agree_only=args.cremad_voice_agree)
     for root in args.ltxself or ():
         clips += ltxself.load(root)
 
@@ -390,6 +396,9 @@ def main() -> None:
     b.add_argument("--arctic", type=Path, default=Path("/data/datasets/cmu_arctic/cmuarctic.data"))
     b.add_argument("--ravdess", type=Path, help="dir of extracted Audio_Speech_Actors_01-24 (Actor_XX/)")
     b.add_argument("--iemocap", type=Path, help="dir holding hf/data/*.parquet from AbstractTTS/IEMOCAP")
+    b.add_argument("--mead", type=Path, help="dir holding MEAD_processed/ and features/MEAD_v23/ (luel/emofi-mead)")
+    b.add_argument("--cremad", type=Path, help="dir holding AudioWAV/ and the CREMA-D repo tables in repo/")
+    b.add_argument("--cremad-voice-agree", action="store_true", help="keep only CREMA-D clips whose emotion the crowd heard (voice-only vote)")
     b.add_argument("--ltxself", type=Path, action="append", help="queen-selfgen output dir (segments.jsonl)")
     b.add_argument("--val-frac", type=float, default=0.03)
     b.add_argument("--test-frac", type=float, default=0.03)

@@ -111,4 +111,6 @@ The lnvox comfy pipeline writes one JSON object per DramaBox render to a JSONL f
 | EmoV-DB | `queen.sources.emovdb` | built from `/data/datasets/emovdb` |
 | RAVDESS (eval only) | `queen.sources.ravdess` | built from `/data/datasets/ravdess` |
 | IEMOCAP (HF mirror `AbstractTTS/IEMOCAP`) | `queen.sources.iemocap` | built from `/data/datasets/iemocap`; Session 5 → `test`; still file the USC release form (the mirror has no license of its own) |
+| CREMA-D (GitHub `CheyneyComputerScience/CREMA-D`) | `queen.sources.cremad` | 2026-11-04, `--cremad /data/datasets/crema-d` (`AudioWAV/` + `repo/` tables); 91 actors, 12 sentences, disgust + fear + anger + joy + sadness + neutral at 4 levels (`HI` → strong); descriptor from `VideoDemographics.csv` (lnvox age word, `american`, sex); crowd voice-only vote in `meta` (`voice_agree`); speaker-hash split |
+| MEAD (HF `luel/emofi-mead`, gated) | `queen.sources.mead` | 2026-11-04, `--mead /data/datasets/mead` (`MEAD_processed/` + `features/MEAD_v23/` lists); 46 actors, fear + surprise at 3 levels (no disgust); EmoFI's speaker split reused (6 test voices); 1,530 clips take their transcript from the split lists; descriptor `adult - <sex>` (accents undocumented) |
 | Common Voice multi-clip speakers | — | needs the CV TSVs (lnvox's 96 GB tarball) |

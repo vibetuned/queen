@@ -25,6 +25,15 @@ judge data and model licenses on that basis.
   from `github.com/Lightricks/LTX-2` tag `v1.5.0` (PyPI's ltx-core is stale). See `pyproject.toml`
   comments for the cuDNN override and the torchaudio test index.
 - New instance bootstrap: `docs/setup.md` (mount `/data`, `uv sync`, `hf auth login`, download weights).
+- **This repo is public: no secrets or private infrastructure names, ever.** That means no S3 bucket names,
+  account IDs, hostnames / IPs, tokens, API keys, email addresses or internal URLs — not in docs, scripts,
+  tests, commit messages, example commands or log excerpts pasted into docs. Use placeholders and shell
+  variables instead: S3 paths are `$QUEEN_S3/<prefix>` (`QUEEN_S3=s3://<bucket>/<prefix>` lives in
+  `~/.bashrc`), credentials come from the environment. Before writing any path or command that names an
+  external resource, ask "would this be fine on a public GitHub page?"; if not, abstract it. A name that
+  reaches the working tree is already a problem (it ends up in git history, and the bucket had to be
+  renamed once, 2026-11-04 — `grep -rn 's3://' --exclude-dir=.git .` should only find `$QUEEN_S3` and
+  `<bucket>` placeholders). The user runs the S3 commands; the agent's shell has no AWS credentials.
 - `QUEEN_DATA` (default `/data`) is the data root for the inference path (`queen-stage` checkpoints,
   `scripts/inference_bundle.sh`, `scripts/archive_data.sh`) — set it on boxes without `/data` (RTX 5090, DGX Spark).
 - `checkpoints/` → symlink to `/data/checkpoints`; `runs/` → symlink to `/data/runs` (browse eval wavs,
@@ -129,7 +138,7 @@ ranges instead (13 s, 0.7 GB RSS).
 - 2026-11-03 — **Inference bundle** (`scripts/inference_bundle.sh pack|upload|download <run>...`, `docs/setup.md`
   §9): the four safetensors `queen-stage` needs (~36 GB, no dev transformer, uploaded once) + one
   `runs-<run>.tar.zst` per training run (shipped checkpoints, evals with wavs; `KEEP_STEPS` in the script
-  says which steps) → `s3://lab-datasets-eu-west-3/test_model/queen/inference-lora-v1/` (prefix name is
+  says which steps) → `$QUEEN_S3/inference-lora-v1/` (prefix name is
   historical; it holds lora-v1, lora-v2, lora-v1-v2, later full-v2). Staging dir `/data/archives/inference/`.
   Gemma still needs ~26 GB GPU / 27 GB host RAM for the ctx phase (the g7 is fine; a 24 GB card is not).
 - 2026-11-03 — **Full fine-tune mode built** (`queen-train run --full true`: all 3.29B DiT params, fp32 masters +
@@ -165,10 +174,41 @@ ranges instead (13 s, 0.7 GB RSS).
   recordings 0.60. RAVDESS is the emotion benchmark (real 1.00, lora-v2 0.60): fear / disgust / surprise are
   the undelivered emotions; anger, joy, sadness, calm land. Runs ordered lora-v2 ≥ lora-v1-v2 ≥ lora-v1 but
   within noise at n = 50 — Gemma pairwise pending.
-- Next: read `eval-full-v2` and the Gemma comparisons; pick the weights to ship; then target fear / disgust /
-  surprise (data: RAVDESS is test-only, EmoV-DB has no fear/surprise, DramaBox renders carry them weakly);
-  re-pack the inference bundle with the chosen weights; decide on a full fine-tune on mix-v3; emotion / naturalness judge; long targets (> 10 s)
-  and the no-reference path. `docs/handoff.md` still lists the open items (IEMOCAP release form, emotion judge).
+- 2026-11-04 — **`full-v2` done** (5.1 h): identical to lora-v2 on WER, WavLM, MOS (3.74) and emotion accuracy
+  (0.51) — full fine-tuning buys nothing over the LoRA; **ship lora-v2** (`/data/runs/lora-v2/lora_step_05034.safetensors`).
+  Per-emotion judge data (`docs/training.md`): the synthetic *targets* for fear / disgust / surprise classify
+  as that emotion only 12–29 % of the time (RAVDESS actors: 100 %), and the model copies its targets — the
+  gap is the audio data, not the text (DeepDialogue has 12.8k surprise / 3.7k fear / 1.0k disgust lines unused).
+  Gemma pairwise comparisons running (`/data/logs/judge-chain.log`, ~30 s per item, ~7 h for the 4 pairs).
+- 2026-11-04 — **MEAD added** (`queen.sources.mead`, licence below): 18,448 clips / 22.3 h / 46 actors with real
+  fear + surprise at 3 intensities; EmoFI's split kept (6 test voices). **`lora-v3` chain running**
+  (`/data/logs/lora-v3-chain.{sh,log}`, ends "lora-v3 chain done", ~5 h): mix-v4 = mix-v3 + MEAD (QC on MEAD
+  only, caches hardlinked) → lora-v2 + 1 epoch at lr 5e-5 → `eval-lora-v3`, `eval-lora-v2-v4`, judge scores.
+- 2026-11-04 — **CREMA-D added** (`queen.sources.cremad`, licence below; 7,442 clips / 5.3 h / 91 actors, the
+  only many-speaker disgust). Crowd voice-only votes agree with the intended emotion for only ~1/3 of disgust /
+  fear / joy clips, so `--cremad-voice-agree` keeps the ~3.6k heard-as-intended ones. **`lora-v4` chain queued**
+  behind lora-v3 (`/data/logs/lora-v4-chain.{sh,log}`, ends "lora-v4 chain done", ~5.5 h): mix-v5 = mix-v4 +
+  CREMA-D → lora-v2 + 1 epoch → evals of lora-v4 / lora-v3 / lora-v2 on mix-v5 items → judge scores.
+  After this round the g7e is no longer needed (full fine-tuning is off the table): archive `/data` to S3
+  (`scripts/archive_data.sh`: datasets incl. mead + crema-d, manifests mix-v5 with caches, runs) and continue on
+  a g7 or the RTX 5090 box with a `/data` symlink (`docs/setup.md` §9); every remaining phase fits 32 GB.
+- 2026-11-04 — **Results** (`docs/training.md`): Gemma pairwise judge is mostly positional (110–147 / 200 flip with
+  clip order); it only separates fine-tuned from base (63 : 25) and cannot rank runs — thinking mode is the one
+  variant left to try. **lora-v3 / lora-v4 done** (2.9 h / 3.1 h): the new real data was learnt as voices, not as
+  emotions — WavLM to MEAD test voices 0.785 → 0.880, old sources unchanged, but RAVDESS fear stays 0 / 8 in every
+  run (rendered as *sad*, whatever the reference), surprise 0.00 → 0.17, MEAD's own fear 0.44 / surprise 0.60; the
+  output follows the reference's emotion only 5–17 % of the time, so the text cue is what the model under-reads.
+  MOS drops on MEAD / CREMA-D items (3.76 → 3.50, 3.73 → 3.01): the model clones the corpora's recording quality
+  (real MOS 2.76 / 1.52). CREMA-D buys nothing on disgust (its hash test split is one actor / 45 clips). **Ship
+  lora-v3** (`/data/runs/lora-v3/lora_step_02520.safetensors`, emotion acc 0.56 vs lora-v2 0.53, MOS 3.67 vs 3.74);
+  lora-v4 not shipped. All GPU work on the g7e is done.
+- Next: pack + upload `manifests-mix-v5` (mix-v3/v4/v5 caches hardlinked) and `runs-*` (lora-v3, lora-v4, full-v2,
+  judge json) with `scripts/archive_data.sh`, add lora-v3 to `KEEP_STEPS` in `scripts/inference_bundle.sh` and
+  re-pack the bundle, then stop the g7e and continue on a g7 / the RTX 5090 box. Then: oversample / loss-weight
+  fear, surprise, disgust and train 2–3 epochs; filter MEAD / CREMA-D targets by e2v agreement; Gemma judge with
+  thinking mode (A/B on the positional rate); offline best-of-N / Diffusion-DPO on e2v + MOS; long targets
+  (> 10 s) and the no-reference path; reference-quality robustness. `docs/handoff.md` (rewritten 2026-11-04) is the handoff
+  for the next box: restore, state, ordered experiments.
 
 ## Data licensing constraints (checked 2026-10-30)
 
@@ -192,6 +232,27 @@ ranges instead (13 s, 0.7 GB RSS).
   happy, sad, angry, fearful, surprise, disgust at two intensities; 1440 speech clips, 48 kHz.
   **CC BY-NC-SA 4.0**: ShareAlike wants adaptations under the same license, while LTX-2 derivatives
   must ship under the LTX-2 Community License — use for evaluation, not training.
+
+- MEAD (Wang et al., ECCV 2020; SenseTime terms of use, `luel/emofi-mead` on HF = the EmoFI-TTS preprocessed
+  package, gated, 46 of 48 Part0 actors, neutral / angry / happy / sad / surprised / fear at 3 intensity
+  levels, no disgust/contempt, 18,458 clips at 22.05 kHz with Whisper-verified transcripts; the original
+  download from Wayne Wu's site is gone). Terms (checked 2026-11-04): non-commercial / non-profit research
+  only; do **not** distribute, host or transfer any portion of the dataset to third parties (colleagues bound
+  by the same terms are fine); cite the paper. No clause on derivatives or trained models, so training is
+  allowed and weights are not restricted by it; eval wavs that contain MEAD clips stay in the private bucket.
+  Dataset in `/data/datasets/mead` (`MEAD_processed/` + EmoFI's `features/MEAD_v23/` split lists).
+
+- CREMA-D (Cao et al. 2014; GitHub `CheyneyComputerScience/CREMA-D`, GitLab mirror `cs-cooper-lab/crema-d-mirror`;
+  maintainers ask for a Google form on access — filed 2026-11-04): 91 actors (ages 20–74, both sexes, four
+  race groups), 12 sentences, anger / disgust / fear / happy / neutral / sad at low / medium / high /
+  unspecified intensity, 7,442 clips at 16 kHz, plus crowd ratings per clip (`VoiceVote`: voice-only majority
+  emotion). **ODbL 1.0** for the database, **DbCL 1.0** for the contents (checked 2026-11-04): use, share and
+  adapt are allowed, commercial too; ShareAlike applies to *derivative databases*, while a trained model is a
+  *produced work* that only needs the ODbL attribution notice. So training and releasing weights are fine
+  with a notice naming CREMA-D and the ODbL; our training data manifests (a derivative database) would have to
+  go out under ODbL if ever published. Our only training source with disgust from many speakers.
+  Dataset in `/data/datasets/crema-d` (`AudioWAV/` = the LFS objects fetched one by one from
+  `media.githubusercontent.com`, verified against the pointer hashes; `repo/` = sparse clone with the tables).
 
 ## Memory budget (why staged)
 

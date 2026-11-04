@@ -32,6 +32,8 @@ Tested on AWS g7 (RTX PRO 4500 Blackwell 32 GB, driver 595, CUDA 13.2). Same ste
    export HF_TOKEN_PATH=$HOME/.cache/huggingface/token
    export UV_CACHE_DIR=/data/uv-cache TMPDIR=/data/tmp
    ```
+   Plus `export QUEEN_S3=s3://<private bucket>/<prefix>` — the bucket name stays out of the repo; every S3
+   command in the docs uses `$QUEEN_S3/archives` and `$QUEEN_S3/inference-lora-v1`.
    Only `~/.cache/uv` from the first `uv sync` (≈ 6 GB) may still sit on root; `uv cache clean` if space
    gets tight.
 6. Optional — LLM direction pass (`docs/directions.md`): pinned prebuilt llama.cpp (CUDA 12.8 build; the
@@ -50,16 +52,23 @@ Tested on AWS g7 (RTX PRO 4500 Blackwell 32 GB, driver 595, CUDA 13.2). Same ste
    scripts/archive_data.sh voices-voicebank-demo voices/voicebank-demo
    scripts/archive_data.sh selfgen-ltxself-v1 selfgen/ltxself-v1
    scripts/archive_data.sh dramabox-dd-v1 --exclude=dramabox/dd-v1/lnvox/cache dramabox/dd-v1
+   # 2026-11-04: MEAD without the HF zips, face frames and spectrograms (2.6 GB); CREMA-D without .git (0.46 GB)
+   scripts/archive_data.sh datasets-mead --exclude='datasets/mead/hf' --exclude='*.png' --exclude='*.spec.pt' datasets/mead
+   scripts/archive_data.sh datasets-crema-d --exclude='datasets/crema-d/repo/.git' datasets/crema-d
    # all manifests in one archive: their caches are hardlinked to each other, and tar keeps hardlinks
    # within an archive (stored once, restored as links)
    scripts/archive_data.sh manifests-mix-v2 manifests/real-v1 manifests/real-v1.{build,cache}.log \
        manifests/mix-v1 manifests/mix-v2
-   aws s3 cp /data/archives/ s3://<bucket>/queen/archives/ --recursive
+   # 2026-11-04: mix-v3/v4/v5 (caches hardlinked between them, stored once); needs manifests-mix-v2 for mix-v2
+   scripts/archive_data.sh manifests-mix-v5 manifests/mix-v3 manifests/mix-v4 manifests/mix-v5
+   # upload only what is missing or changed in size (sync), top-level archives only (inference/ has its own script)
+   aws s3 sync /data/archives/ $QUEEN_S3/archives/ \
+       --exclude '*' --include '*.tar.zst' --include '*.tar.zst.sha256' --exclude 'inference/*'
    # restore: aws s3 cp ... /data/archives/ --recursive, then per archive
    sha256sum -c NAME.tar.zst.sha256 && tar -I zstd -xf NAME.tar.zst -C /data
    ```
    Manifests and caches use absolute `/data/...` paths, so restore under `/data`. `manifests-mix-v2`
-   supersedes the older `manifests-real-v1` archive. Not worth archiving: checkpoints (re-download;
+   supersedes the older `manifests-real-v1` archive; `manifests-mix-v5` adds mix-v3/v4/v5 on top of it. Not worth archiving: checkpoints (re-download;
    `queen-base` is a single file anyway), `vendor/`, `hf-cache/`, `dramabox/dd-v1/lnvox/cache` (a second
    copy of the renders). Keep the bucket private (IEMOCAP: internal research only).
 8. Optional — DramaBox renders (`docs/dramabox-renders.md`): lnvox checkout + its own env with DramaBox
@@ -70,12 +79,14 @@ Tested on AWS g7 (RTX PRO 4500 Blackwell 32 GB, driver 595, CUDA 13.2). Same ste
    `checkpoints/`, `runs/`, `archives/` under it (default `/data`).
    ```bash
    export QUEEN_DATA=$HOME/queen-data   # omit where /data exists; put it in ~/.bashrc
-   scripts/inference_bundle.sh download s3://lab-datasets-eu-west-3/test_model/queen/inference-lora-v1 lora-v1 lora-v2 lora-v1-v2
+   scripts/inference_bundle.sh download $QUEEN_S3/inference-lora-v1 lora-v1 lora-v2 lora-v1-v2
    uv run queen-stage plan items.jsonl $QUEEN_DATA/runs/demo --lora $QUEEN_DATA/runs/lora-v2/lora_step_05034.safetensors
    uv run queen-stage run $QUEEN_DATA/runs/demo && uv run queen-eval $QUEEN_DATA/runs/demo
    ```
    Only the inference path honours `QUEEN_DATA`; manifests, caches and the dataset tools still assume `/data`
-   (their files carry absolute `/data/...` paths).
+   (their files carry absolute `/data/...` paths). To **train** on a box without `/data` (RTX 5090), don't
+   port the paths: `sudo ln -s /path/to/big/disk /data` and restore the archives there — every manifest,
+   cache and run then works unchanged, and `QUEEN_DATA` can stay unset.
    One prefix holds the weights once (~36 GB: extracted audio DiT 9.9 GB, Gemma 4 12B text encoder with
    projections 25 GB, audio VAE, duration head — keys mirror the data root, `.sha256` sidecars) plus one
    `runs-<run>.tar.zst` per training run (shipped checkpoints, `config.json`, `log.jsonl`, and the eval

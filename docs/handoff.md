@@ -1,139 +1,166 @@
-# Handoff: g7 → g7e (2026-11-01)
+# Handoff: g7e → g7 / RTX 5090 (2026-11-04)
 
-The dataset is finished on the g7. The next job is the **training loop**, which is not written yet. This
-note covers what the next machine needs: restoring the data, what is ready, the training design questions
-found while reading `ltx-trainer`, open items, and how the user likes to work. Background facts live in
-`CLAUDE.md` (status log, licensing, memory budget) and the docs it links. When training is under way,
-move anything here that is still true into `CLAUDE.md` / `docs/` and delete this file.
+The g7e's job is done: full fine-tuning was tested and buys nothing over the LoRA, and the last two data
+rounds (MEAD, CREMA-D) are trained and judged. Every remaining phase fits a 32 GB card, so the research
+continues on a g7 or the RTX 5090 box. This note is what the next machine needs: the restore, what is
+ready, what the last round showed, and the ordered list of next experiments. Background facts live in
+`CLAUDE.md` (status log, licensing, memory budget) and the docs it links. When the next round is under
+way, move anything here that is still true into `CLAUDE.md` / `docs/` and delete this file.
 
-## 1. Restore on the g7e
+## 1. Restore
 
-**Done 2026-11-03** with `./install.sh restore` (steps 1–3 below in one resumable job, 17 min on the
-g7e; all checks pass: 40 tests, 26,843 train pairs, 59,132 cache files). Kept for the next machine.
+Everything final is in the private bucket under `$QUEEN_S3/` (the bucket name is not in the repo: get it
+from the user and `export QUEEN_S3=s3://<bucket>/<prefix>` in `~/.bashrc`):
+`archives/` (datasets, manifests, generated data) and `inference-lora-v1/` (the weights `queen-stage`
+needs without the 42 GB dev transformer, plus one `runs-<run>.tar.zst` per training run; the prefix name
+is historical). Two ways in, depending on the box:
 
-1. `docs/setup.md` steps 1–4: mount `/data`, `uv sync`, `hf auth login`, `scripts/download_checkpoints.sh`.
-   Then extract the audio DiT (README; 13 s, it never mmaps the 42 GB file):
-   ```bash
-   uv run queen-extract /data/checkpoints/LTX-2.5/diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors \
-       /data/checkpoints/queen-base/ltx-2.5-audio-transformer-bf16.safetensors
-   ```
-2. Pull the archives from the private S3 bucket into `/data/archives` and unpack each **under `/data`**
-   (manifests and caches store absolute `/data/...` paths):
-   ```bash
-   cd /data/archives && for a in *.tar.zst; do sha256sum -c "$a.sha256" && tar -I zstd -xf "$a" -C /data; done
-   ```
+**A. Full research box (g7, or the 5090 box with a `/data` symlink)** — `docs/setup.md` steps 1–5:
+```bash
+./install.sh system                                   # drivers, uv, mounts the NVMe at /data, reboots
+nohup ./install.sh restore $QUEEN_S3/archives > /data/logs/restore.log 2>&1 &
+```
+`restore` pulls every archive, downloads the weights (needs the HF token and the LTX-2.5 licence
+accepted), extracts the audio DiT and unpacks under `/data`. On the 5090 box there is no NVMe to mount:
+`sudo ln -s /path/to/big/disk /data` first, then run `restore` (it only needs `/data` to exist and be
+writable; skip `install.sh system` if the driver and uv are already there). 17 min on the g7e; the
+archives are ~30 GB, the weights 69 GB. Restore checks: `pytest` (53 tests), `queen-manifest stats
+/data/manifests/mix-v5` (train 43,667 pairs), mix-v5 cache files 95,194.
 
-   | Archive | Size | Restores |
-   |---|---|---|
-   | `datasets.tar.zst` | 3.8 GB | `datasets/` (EmoV-DB, RAVDESS, IEMOCAP mirror, CMU Arctic, DeepDialogue parquet) |
-   | `directions-deepdialogue-v1.tar.zst` | 17 MB | `directions/deepdialogue-v1` (director output, 243k lines) |
-   | `voices-voicebank-demo.tar.zst` | 0.4 GB | `voices/voicebank-demo` (800 CC0 Common Voice voices) |
-   | `selfgen-ltxself-v1.tar.zst` | 6.6 GB | `selfgen/ltxself-v1` (LTX long takes + sentence segments) |
-   | `dramabox-dd-v1.tar.zst` | 9.4 GB | `dramabox/dd-v1` (7,000 renders, `plan.jsonl`, `renders.jsonl`) |
-   | `manifests-mix-v2.tar.zst` | 3.1 GB | `manifests/{real-v1,mix-v1,mix-v2}` with all caches (hardlinked) |
+| Archive | Size | Restores |
+|---|---|---|
+| `datasets.tar.zst` | 3.6 GB | EmoV-DB, RAVDESS, IEMOCAP mirror, CMU Arctic, DeepDialogue parquet |
+| `datasets-mead.tar.zst` | 2.6 GB | `datasets/mead` (wavs + transcripts + EmoFI split lists; no HF zips / frames) |
+| `datasets-crema-d.tar.zst` | 0.5 GB | `datasets/crema-d` (7,442 wavs + the tables) |
+| `directions-deepdialogue-v1.tar.zst` | 17 MB | director output, 243k lines |
+| `voices-voicebank-demo.tar.zst` | 0.4 GB | 800 CC0 Common Voice voices |
+| `selfgen-ltxself-v1.tar.zst` | 6.2 GB | LTX long takes + sentence segments |
+| `dramabox-dd-v1.tar.zst` | 8.8 GB | 7,000 DramaBox renders |
+| `manifests-mix-v2.tar.zst` | 3.0 GB | `manifests/{real-v1,mix-v1,mix-v2}` with caches |
+| `manifests-mix-v5.tar.zst` | 4.2 GB | `manifests/{mix-v3,mix-v4,mix-v5}` with caches (hardlinked, stored once) |
 
-   `manifests-real-v1.tar.zst`, if it is in the bucket, is superseded by `manifests-mix-v2`.
-3. Check the restore: `uv run pytest -q` (40 tests); `uv run queen-manifest stats /data/manifests/mix-v2`
-   (train 26,843 pairs); `find /data/manifests/mix-v2/cache -type f | wc -l` should print 59,132.
-4. Not archived, rebuilt only when needed: `hf-cache/` (Whisper, WavLM, DramaBox: downloaded on first
-   use), llama.cpp + GGUF (`docs/setup.md` step 6, only for new direction passes), lnvox's own env with
-   DramaBox (step 8, only for new renders).
-5. RAM: read `free -g` first. Never mmap the 42 GB dev transformer on a host with less RAM than that
-   (`CLAUDE.md`, "Extracted base checkpoint").
+`manifests-real-v1.tar.zst` is superseded by `manifests-mix-v2`. Unpack order does not matter; caches
+across the two manifest archives are separate copies after restore (fine: they are small). Training runs
+(adapters, evals with wavs, judge json) come from the inference prefix, see B.
 
-## 2. Training data that is ready
+**B. Inference / eval only** (any box with ~40 GB free, 32 GB GPU, ≥ 30 GB host RAM for Gemma) —
+`docs/setup.md` §9:
+```bash
+export QUEEN_DATA=$HOME/queen-data        # omit where /data exists
+scripts/inference_bundle.sh download $QUEEN_S3/inference-lora-v1 lora-v3 lora-v2
+uv run queen-stage plan items.jsonl $QUEEN_DATA/runs/demo --lora $QUEEN_DATA/runs/lora-v3/lora_step_02520.safetensors
+uv run queen-stage run $QUEEN_DATA/runs/demo && uv run queen-eval $QUEEN_DATA/runs/demo
+```
+Runs in the bundle: lora-v1, lora-v2, lora-v1-v2, lora-v3, lora-v4, full-v2 (8.7 GB, only for the
+`--transformer` path). Each tarball also restores its evals under `runs/` (`eval-<run>*` with wavs) and
+`eval-base*`. Training needs A: manifests, caches and the dataset tools carry absolute `/data/...` paths.
 
-`/data/manifests/mix-v2`: `clips.jsonl`, `pairs.jsonl` (ref → target, same speaker and split, different
-transcript), `build.json`, `qc.jsonl`, and the cache (schema in `docs/manifest.md`):
-- `cache/latents/<clip id>.safetensors` → `{"latent": [1, 8, T, 16]}`, the whole clip at 25 frames/s.
-  Crop references to `ref_seconds` (10 s) at train time.
-- `cache/text/<sha256(prompt)[:16]>.safetensors` → `{"features": [T_valid, 2048]}`. These are Gemma +
-  `audio_aggregate_embed` outputs, valid tokens only. `queen.text.connect` pads them back to 1024 tokens
-  and runs the audio connector, which therefore has to run in the training step. The empty prompt `""`
-  is cached for CFG dropout.
+Not archived, rebuilt on first use: `hf-cache/` (Whisper, WavLM, UTMOS, emotion2vec+, Gemma 4 12B-it
+for the judge), llama.cpp + GGUF (direction passes only), lnvox's env (new DramaBox renders only).
+Memory: never mmap the 42 GB dev transformer on a host with less RAM than that (`CLAUDE.md`); the ctx
+phase and `queen-cache --phase text` load Gemma in bf16, ~26 GB GPU and ~27 GB host RAM; the Gemma
+*judge* (`queen-judge compare`) is ~25 GB GPU. The 5090 box has 96 GB non-ECC RAM: run a memtest once;
+a flipped bit shows as a loss spike / NaN in training or one bad cache file.
+
+## 2. State of the model
+
+- **Ship `lora-v3`**: `/data/runs/lora-v3/lora_step_02520.safetensors` (LoRA r32 on audio attn/FFN,
+  82 M params, ComfyUI layout; `queen-stage plan --lora`). Recipe: lora-v2 (3 epochs on mix-v3) + 1 epoch
+  on mix-v4 at lr 5e-5, i.e. `queen-train run mix-v4 OUT --init-lora lora-v2/lora_step_05034.safetensors
+  --epochs 1 --lr 5e-5 --warmup-steps 100`. Numbers (`docs/training.md`, test items, 50 per source):
+  WER ≤ 0.01 everywhere, 0 babbles; WavLM to own reference dramabox 0.94 / iemocap 0.86 / mead 0.88 /
+  ravdess 0.85 (other references ~0.61); UTMOS 3.67; emotion2vec cue accuracy 0.56 (real recordings 0.72).
+  `lora-v2` (`lora_step_05034`) is the alternative where MOS matters more than voice coverage (3.74, but
+  0.785 on the MEAD voices). lora-v4 (+ CREMA-D) and full-v2 are kept for reference, not shipped.
+- **What works**: voice cloning from a 10 s reference, reading the text, anger / joy / sadness / calm /
+  neutral cues. Continuation training (`--init-lora`) is non-destructive and matches from-scratch at a
+  third of the compute.
+- **What does not** (the open problem): **fear, surprise, disgust cues are not delivered.** RAVDESS fear 0 / 8
+  in every run (rendered as *sad*, whatever the reference's emotion), surprise 0.17, disgust 0.14–0.43;
+  on MEAD's held-out voices fear 0.44, surprise 0.60, where the real takes classify at 1.00. Adding 3 h of
+  real fear and 3 h of real surprise (MEAD) and 0.33 h of disgust (CREMA-D) for one epoch at lr 5e-5
+  taught the model the *voices* (+0.10 WavLM) but not the emotions. Two facts narrow it down: the output
+  follows the reference's emotion only 5–17 % of the time on cross-emotion items (so the text cue is what
+  the model under-reads, not the in-context reference winning), and those cues are ~10 % of the training
+  pairs. Also: the model clones the *recording quality* of the reference (UTMOS on MEAD items 3.76 → 3.50,
+  on CREMA-D 3.73 → 3.01 after training on them; the corpora's real MOS are 2.76 / 1.52).
+- **Judges** (`queen-judge`, `docs/training.md` §5): UTMOS + emotion2vec+ `score` is the ranking signal;
+  RAVDESS is the emotion benchmark (acted, e2v recognises the real takes at 1.00), the MEAD test voices the
+  second one. The Gemma 4 12B-it pairwise judge is mostly positional (110–147 / 200 verdicts flip with
+  clip order) and only separates fine-tuned from base; untried: `enable_thinking=True`.
+
+## 3. Training data that is ready
+
+`/data/manifests/mix-v5` (`docs/manifest.md` for the schema; `clips.jsonl`, `pairs.jsonl`, `qc.jsonl`,
+`cache/latents/<clip id>.safetensors`, `cache/text/<sha256(prompt)[:16]>.safetensors`):
 
 | split | pairs | target h | real share | targets |
 |---|---|---|---|---|
-| train | 26,843 | 41.4 | 52 % | dramabox 6,460 · emovdb 6,801 · iemocap 7,274 · ltxself 6,308 |
-| val | 427 | 0.7 | 0 % | dramabox 192 · ltxself 235 |
-| test | 3,852 | 4.8 | 88 % | dramabox 259 · iemocap 1,967 · ltxself 186 · ravdess 1,440 |
+| train | 43,667 | 60.1 | 71 % | mead 13,474 · iemocap 7,274 · emovdb 6,801 · dramabox 6,460 · ltxself 6,308 · cremad 3,350 |
+| val | 2,249 | 2.9 | 81 % | mead 1,659 · ltxself 235 · dramabox 192 · cremad 163 |
+| test | 6,446 | 8.1 | 93 % | mead 2,549 · iemocap 1,967 · ravdess 1,440 · dramabox 259 · ltxself 186 · cremad 45 |
 
-Train relations are 11,685 same-emotion, 9,028 cross-emotion (emotion must come from the prompt) and
-6,130 unlabeled. `mix-v1` is the same set without the DramaBox renders and the voicebank (20,383 train
-pairs), useful for an ablation. Weights trained on IEMOCAP cannot be released without USC's permission:
-`queen-manifest stats --releasable` and `manifest.releasable_pairs()` give the shareable subset.
+Train relations: 20,073 same-emotion, 17,464 cross-emotion, 6,130 unlabeled. mix-v4 = the same without
+CREMA-D (lora-v3's data); mix-v3 = without MEAD too (lora-v2's). Known defects: the CREMA-D speaker-hash
+test split is one actor (45 clips) — give it an explicit split if it is ever to be a benchmark; the val
+loss is not comparable across manifests (different val sets). Releasability: IEMOCAP-trained weights
+need USC's permission (`queen-manifest stats --releasable`); MEAD clips must never leave the bucket;
+CREMA-D needs an ODbL attribution notice (`CLAUDE.md`).
 
-## 3. Next: the training loop
+Unused text: DeepDialogue directions have 12.8k surprise / 3.7k fear / 1.0k disgust lines
+(`/data/directions/deepdialogue-v1`, `docs/directions.md`) — but the synthetic *audio* for those emotions
+(DramaBox, LTX self-gen) classifies as the cue only 12–29 % of the time, which is why they were not
+rendered; rendering them is only useful with rejection sampling on emotion2vec.
 
-Goal: teach the audio DiT to take **voice from the reference and words + emotion from the prompt**.
-Zero-shot, the base model copies the voice (WavLM ~0.9) but stops reading the text (WER 1.00 / 0.92 in 2
-of 3; `docs/staged.md`). The plan is LoRA first, then a full fine-tune. Full fine-tuning with AdamW needs
-~60 GB, which fits on the g7e's 96 GB.
+## 4. Next experiments, in order
 
-**`ltx-trainer` exists at our pinned tag** (`github.com/Lightricks/LTX-2` v1.5.0, `packages/ltx-trainer`;
-not installed in this env). Its `configs/a2a_ic_lora.yaml` with the `flexible` strategy and a `reference`
-condition is audio-to-audio in-context LoRA. That is our setup: the reference latents are concatenated
-with the target, get no noise and timestep 0, and are excluded from the loss. It uses flow matching with
-`shifted_logit_normal` timesteps. Its LoRA targets (`audio_attn1/2.to_{q,k,v,out.0}`,
-`audio_ff.net.{0.proj,2}`) match the key names in our extracted checkpoint (checked). It does **not**
-drop in as-is:
+1. **Make the under-delivered cues land** (the one thing the model is missing). From lora-v3:
+   - oversample pairs whose target emotion is fear / surprise / disgust (or weight their loss) so they are
+     ~1/3 of the steps instead of ~10 %, and train 2–3 epochs at lr 5e-5 (one epoch moved nothing);
+   - filter the MEAD / CREMA-D *targets* by emotion2vec agreement with their label before training
+     (`queen-judge score` already computes it for the eval items; the same pass over the training clips is
+     a small script), as the crowd votes did for CREMA-D — don't teach fear the classifier cannot hear;
+   - listen to the RAVDESS fear outputs (`runs/eval-lora-v3-v5/wav/`): "fearful, trembling" comes out as a
+     low-energy shaky voice. If the cue text is the problem, try cues with the acoustic correlates
+     ("breathless, high-pitched, urgent") in `EMOTION_CUES` (`queen/manifest.py`) — that needs a new text
+     cache for the changed prompts only (`queen-cache --phase text`, cached by prompt hash).
+   Measure on RAVDESS + the MEAD test voices with `queen-train eval … --per-source 50` then `queen-judge
+   score … --manifest mix-v5`; the eval item set is seeded, so runs stay comparable.
+2. **Judge improvement**: A/B the Gemma judge with thinking mode (`enable_thinking=True` in
+   `apply_chat_template`, temperature 1.0 sampling as Google recommends, parse after the thought block —
+   `queen/evaluator.py`), 50 items, both orders; keep it only if the positional rate drops well below 50 %.
+   Otherwise rank on e2v accuracy + UTMOS and listening.
+3. **Reward-based training on the judge signal** (`docs/training.md`): offline best-of-N (generate N
+   seeds per training prompt, keep the e2v-best / UTMOS-best as targets) is the cheap one and reuses
+   `queen-stage`; then Diffusion-DPO on the preference pairs; online GRPO last (flow-matching analogues:
+   F5R-TTS, FlowTTS-GRPO; DiffRO / RRPO are for codec-token TTS).
+4. **Reference-quality robustness**: the model copies the microphone. Options: augment the reference
+   (bandwidth / noise) while keeping clean targets, or an explicit quality cue in the prompt.
+5. **Long targets (> 10 s)** and the **no-reference path** (`ref_dropout` is already 0.1, untested at
+   inference). Both are inference / eval work on the staged pipeline.
+6. Bookkeeping: file the USC IEMOCAP release form; `install.sh restore` checks mix-v5 now.
 
-1. **Reference placement differs from our inference — decide this before training.** The trainer puts
-   the reference first, with RoPE time positions starting at 0, so they overlap the target's positions
-   (`flexible.py`, `_apply_reference_condition`). `queen-stage` and ltx-pipelines' Dub-It pipeline place
-   the reference at **negative** time positions ending 0.04 s before the target
-   (`patchify_audio_reference_latent(negative_positions=True)`). The zero-shot baseline was measured with
-   the negative placement. Training and inference must use the same one. Recommended: keep the negative
-   placement, which matches our inference, Dub-It and the baseline.
-2. **Model loading.** `ltx_trainer.model_loader.load_transformer` builds the full 22B AV model
-   (`LTXModelConfigurator`, 42 GB in bf16). Build the audio-only model from our extracted checkpoint
-   instead: `LTXAudioOnlyModelConfigurator` + `LTXV_AUDIO_ONLY_MODEL_COMFY_RENAMING_MAP` through
-   `queen.loading.build_checked`, as `queen.staged.phase_denoise` does.
-3. **Data layout.** The trainer reads one `.pt` per sample from `conditions/` (padded
-   `audio_prompt_embeds` + `prompt_attention_mask`), `audio_latents/` and `reference_audio_latents/`,
-   matched by file name. Ours is one safetensors file per clip, keyed through `pairs.jsonl`, with
-   per-prompt text features. Reading the manifest directly avoids writing 27k sample triplets and keeps
-   the random reference crop.
-
-Suggested shape: a thin `queen/train.py` (`queen-train`) that reads `pairs.jsonl` and the cache. It
-reuses ltx-core for the model, patchifier and positions; `queen.text` for the connector; and ltx-trainer's
-timestep sampler and loss masking, either imported (add it as a uv git dependency, subdirectory
-`packages/ltx-trainer`, same tag) or copied if the dependency is heavy. It trains LoRA with `peft` (0.21,
-already installed); `accelerate` is installed too. Batch by length bucket, since latent lengths vary from 2
-to 22 s. Then:
-- add LoRA loading to `queen-stage` (`DiffusionStage.from_checkpoint(..., loras=...)` is currently `()`);
-- write an eval harness that turns test/val pairs into `queen-stage` items (ref = ref clip audio,
-  text = target prompt) and scores them with `queen-eval` (WER + WavLM similarity). Report RAVDESS,
-  IEMOCAP S5 and the held-out voicebank voices separately.
-
-Things that cannot be measured yet: **emotion**. `superb/hubert-large-superb-er` labels almost everything
-"angry" out of domain (RAVDESS neutral 21/25), so for now prosody (pitch, energy, rate) against the cue is
-the only measure. Finding a better emotion judge is still open.
-
-## 4. Open items
-
-- The val split is 100 % synthetic, because EmoV-DB is pinned to train and IEMOCAP S5 to test. Use test
-  for real-speech numbers.
-- File the USC IEMOCAP release form. Optionally ask Fish Audio for a written agreement: drama-3 outputs
-  are banned as training data without one.
-- More data if needed: the direction pass has ~84 h of non-joy lines (`docs/directions.md`). More
-  DramaBox renders cost ~4.5 s each on a g7, and LTX self-gen takes ~4.4 h of denoise per 3,500 takes.
-  Batched denoise for big self-gen runs is not built.
-- Two DeepDialogue dialogues always fail direction (Gemma answers "relief", which is not in the enum).
-  They are skipped.
+Compute: a LoRA epoch on mix-v5 is ~3 h on the g7e at 4.3 samples/s; expect ~2× that on a g7 (RTX PRO
+4500, 32 GB — set `--gradient-checkpointing true` if the 12 s targets do not fit, peak was 13.8 GB without
+on the g7e) and similar on the 5090. Evals: ~25 min per 300 items; `queen-judge score` ~1 min per run
+after the models are cached; the Gemma pairwise judge ~30 s per item.
 
 ## 5. How the user works
 
 - **Never commit or push.** The user handles git. Leave changes in the working tree.
 - **Persist knowledge in the repo** (`CLAUDE.md` status entries, `docs/`), never in `~/.claude` memory:
   instances are ephemeral. Don't edit `~/.bashrc` without asking.
-- Long jobs run detached so the user can close VS Code:
-  `nohup bash -c 'set -euo pipefail; …' > /data/logs/<name>.log 2>&1 &`, with chained steps and a final
-  "… done" line. Phases resume because a file on disk means done (tmp + `os.replace`). The user checks
-  in every few hours: report progress, ETA and anything odd.
-- `/data` is wiped on stop. Before a stop or swap, pack finished folders with
-  `scripts/archive_data.sh` (`docs/setup.md` step 7) for the user to copy to a **private** bucket.
-- Licensing rules are in `CLAUDE.md`. Vibetuned is a non-profit arts research lab, and that is the
-  basis for every licence judgment.
-- Gotchas: `pkill -f <pattern>` can match your own shell (use `pkill -x`, a PID, or a `[b]racket`
-  pattern). Set `HF_HOME=/data/hf-cache` for anything in lnvox's env. llama-server needs `--cache-ram 0`.
+- Long jobs run detached so the user can close VS Code: a chain script in `/data/logs/<name>-chain.sh`
+  launched with `(nohup … > /data/logs/<name>-chain.log 2>&1 &)`, steps separated by `=== step <date>`
+  lines and a final "<name> chain done" line; a queued chain waits on the previous one's done line.
+  Phases resume because a file on disk means done. The user checks in every few hours: report progress,
+  ETA and anything odd. AWS credentials are not in the agent's shell: the user runs the S3 commands.
+- `/data` is wiped on stop (EC2 instance store). Before a stop or swap, pack finished folders with
+  `scripts/archive_data.sh` and runs with `scripts/inference_bundle.sh pack` (`docs/setup.md` step 7 and
+  §9) for the user to sync to the **private** bucket.
+- Licensing rules are in `CLAUDE.md`. Vibetuned is a non-profit arts research lab, and that is the basis
+  for every licence judgment.
+- Gotchas: `pkill -f <pattern>` / `kill $(pgrep -f …)` can match your own shell (use explicit PIDs or a
+  `[b]racket` pattern). `HF_HOME=/data/hf-cache` plus `HF_TOKEN_PATH` for the token. llama-server needs
+  `--cache-ram 0`. Never run a GPU job next to training without checking `nvidia-smi` first; the text
+  cache needs ~27 GB host RAM free (the chains guard on `free -g`).

@@ -72,6 +72,7 @@
     | lora-v1-v3 | 3 ep, old prompts | 0.006 / 0.938 | 0.009 / 0.854 | 0.003 / 0.622 | 0.000 / 0.854 | 0 |
     | lora-v2 | 3 ep, new prompts (5.7 h, val 0.612) | 0.008 / 0.935 | 0.009 / 0.860 | 0.001 / 0.611 | 0.000 / 0.866 | 0 |
     | lora-v1-v2 | lora-v1 + 1 ep new prompts, lr 5e-5 (1.9 h, val 0.611) | 0.008 / 0.944 | 0.010 / 0.856 | 0.001 / 0.618 | 0.000 / 0.853 | 0 |
+    | full-v2 | full fine-tune, 3 ep new prompts, lr 1e-5 (5.1 h) | 0.008 / 0.942 | 0.009 / 0.856 | 0.001 / 0.629 | 0.000 / 0.852 | 0 |
 
     Reading: (1) the prompt change alone does nothing measurable — base-v3 equals base, and lora-v1 reads
     the new descriptors exactly as well as the old ones, so the feared "rich descriptor ⇒ synthetic voice"
@@ -93,6 +94,7 @@
     | lora-v1-v3 | 3.76 | 0.47 | 0.50 | 0.50 | 0.908 |
     | lora-v2 | 3.75 | **0.51** | **0.60** | 0.53 | **0.912** |
     | lora-v1-v2 | 3.73 | 0.50 | 0.58 | **0.56** | 0.910 |
+    | full-v2 | 3.74 | **0.51** | 0.54 | **0.59** | 0.908 |
 
     Reading: fine-tuning lifts MOS 3.24 → 3.75 (above the real recordings: IEMOCAP's are noisy dyadic takes
     at 2.65) and emotion accuracy 0.33 → ~0.5, against a classifier ceiling of 0.60 on the real recordings.
@@ -105,6 +107,88 @@
   - **Full fine-tune `full-v2`** on mix-v3 (`/data/logs/full-v2-chain.{sh,log}`, ends "full-v2 chain done";
     waits for the lora-v1-v2 chain): `--full true --lr 1e-5 --epochs 3 --save-every 1000`, ~5.2 h + eval
     `eval-full-v2` (via `--transformer`). Answers the question full-v1 was started for, on the corrected prompts.
+    **Result (5.1 h, done 14:10 UTC)**: WER / sim 0.008 / 0.942, 0.009 / 0.856, 0.001 / 0.629, 0.000 / 0.852,
+    0 babbles; judge MOS 3.74, emotion accuracy 0.51 (RAVDESS 0.54) — identical to lora-v2 within noise on
+    every metric. Full fine-tuning buys nothing over the 82 M-parameter LoRA at ~10× the checkpoint size:
+    **ship the LoRA**, keep `--full` for a later data-limited regime if one appears.
+  - **MEAD + `lora-v3` chain** (`/data/logs/lora-v3-chain.{sh,log}`, ends "lora-v3 chain done"; started
+    14:15 UTC 2026-11-04 next to the judge chain): `/data/manifests/mix-v4` = mix-v3 sources + MEAD
+    (`queen.sources.mead`, `docs/manifest.md`; licence in CLAUDE.md): 18,448 clips / 22.3 h / 46 speakers,
+    neutral / anger / joy / sadness / **fear** / **surprise** at 3 intensity levels (level 3 → "very …"),
+    EmoFI's speaker-disjoint split kept (train 36 speakers / 14,082 clips, val 4 / 1,715, test 6 / 2,651 —
+    ~0.6 h of fear and of surprise in test). Fear 3.0 h and surprise 3.2 h of real speech in train, where mix-v3
+    had none worth the name (DramaBox / LTX "fear" renders classify as fear 17 % / 12 % of the time). Steps:
+    `queen-manifest build … --mead /data/datasets/mead --qc` (qc.jsonl copied from mix-v3, so Whisper runs on
+    MEAD only; caches hardlinked) → `queen-cache` (MEAD latents + 2,113 prompts) → `lora-v3` = lora-v2 +
+    1 epoch on mix-v4 at lr 5e-5 (the lora-v1-v2 recipe) → `eval-lora-v3` and `eval-lora-v2-v4` (lora-v2 on
+    the same mix-v4 items: 50 per source, the old sources keep their pairs, `mead` is the new one) →
+    `queen-judge score … --manifest mix-v4`. Question: does real fear / surprise data make the model deliver
+    those cues (RAVDESS fear 0.12 → ?, surprise 0.00 → ?; mead test is the second benchmark), and does the
+    continuation keep the other sources' numbers.
+  - **CREMA-D + `lora-v4` chain** (`/data/logs/lora-v4-chain.{sh,log}`, ends "lora-v4 chain done"; waits for
+    lora-v3): `queen.sources.cremad` (licence in CLAUDE.md: ODbL, weights need only an attribution notice).
+    7,442 clips / 5.3 h / 91 actors, 12 sentences, disgust / fear / anger / joy / sadness / neutral. The crowd's
+    voice-only majority vote agrees with the intended emotion for only 0.67 anger / 0.34 disgust / 0.38 fear /
+    0.34 joy / 0.24 sadness (neutral 0.98: it is the default vote), i.e. most acted CREMA-D clips sound neutral
+    without the face — the same target-label noise that made the synthetic fear / disgust useless, so
+    `--cremad-voice-agree` keeps only the ~3.6k clips listeners heard as intended (disgust ≈ 430 clips, 0.33 h,
+    from ~90 voices). `/data/manifests/mix-v5` = mix-v4 + those clips (speaker-hash split, QC on them only,
+    caches hardlinked) → `lora-v4` = lora-v2 + 1 epoch on mix-v5 at lr 5e-5 → `eval-lora-v4`, `eval-lora-v3-v5`,
+    `eval-lora-v2-v5` (300 items: 6 sources × 50) → judge scores. lora-v4 vs lora-v3 isolates CREMA-D's
+    contribution (RAVDESS disgust: lora-v2 0.14 → ?); lora-v3 vs lora-v2 isolates MEAD's.
+  - **Gemma pairwise results 2026-11-04** (`judge-chain`, 200 items per pair, both orders, greedy): the judge is
+    **mostly positional** — 110–147 of 200 verdicts flip with clip order. Non-positional tallies (A : B : tie):
+    lora-v2 vs base-v3 **63 : 25 : 2** (the only decisive pair: 72 % for the fine-tune where it has an opinion),
+    full-v2 vs lora-v2 27 : 23 : 8, lora-v1-v2 vs lora-v2 24 : 24 : 6, lora-v2 vs lora-v1-v3 17 : 30 : 6.
+    So Gemma 4 12B-it in this setup separates fine-tuned from base and nothing finer; it cannot rank the
+    runs. ~7 h for four pairs. Thinking mode is the one cheap variant left to try (`enable_thinking`, then
+    judge by the positional rate); otherwise rank on e2v accuracy + MOS and listening.
+  - **Results lora-v3 / lora-v4 2026-11-04** (lora-v3: 2,520 steps / 2.9 h, val 0.611; lora-v4: 2,730 steps /
+    3.1 h, val 0.512 — a different val set, not comparable). mix-v5 train = 43,667 pairs / 60.1 h of targets,
+    71 % real; MEAD 13,474 train targets, CREMA-D 3,350 (85 voices; its speaker-hash **test split is one
+    actor / 45 clips**, so the `cremad` rows below are one voice and disgust is n = 2 — not a benchmark).
+    All three adapters evaluated on the same mix-v5 items (50 per source, 45 cremad):
+
+    | run (on mix-v5 items) | MOS all / mead / cremad | sim own mead / cremad | emo acc all / ravdess / mead / cremad |
+    |---|---|---|---|
+    | real recordings | 2.93 / 2.76 / 1.52 | — | 0.72 / 1.00 / 0.94 / 0.98 |
+    | lora-v2 | **3.74** / 3.76 / 3.73 | 0.785 / 0.788 | 0.53 / 0.60 / 0.64 / 0.58 |
+    | lora-v3 (+ MEAD) | 3.67 / 3.50 / 3.62 | **0.880** / 0.799 | **0.56** / 0.60 / 0.70 / 0.64 |
+    | lora-v4 (+ MEAD + CREMA-D) | 3.56 / 3.53 / 3.01 | 0.878 / **0.816** | **0.56** / 0.58 / 0.72 / 0.60 |
+
+    WER ≤ 0.01 and the old sources' WavLM numbers are unchanged (dramabox 0.94, iemocap 0.86, ravdess 0.86,
+    ltxself 0.62) — continuation stays non-destructive. Per emotion (e2v label = cue; n in brackets):
+
+    | cue | ravdess v2 / v3 / v4 | mead v2 / v3 / v4 | cremad v2 / v3 / v4 |
+    |---|---|---|---|
+    | fear | 0.00 / 0.00 / 0.00 (8) | 0.44 / 0.44 / 0.44 (9) | 0.00 / 0.14 / 0.29 (7) |
+    | surprise | 0.00 / 0.17 / 0.17 (6) | 0.50 / 0.50 / 0.60 (10) | — |
+    | disgust | 0.43 / 0.43 / 0.14 (7) | — | 0.00 / 0.00 / 0.00 (2) |
+    | sadness | 0.50 / 0.75 / 0.50 (4) | 0.50 / 0.75 / 0.75 (8) | 0.00 / 0.00 / 0.00 (4) |
+    | joy | 1.00 / 0.75 / 1.00 (4) | 0.64 / 0.91 / 0.82 (11) | 0.55 / 0.64 / 0.55 (11) |
+    | anger | 1.00 (6) | 1.00 / 0.78 / 0.89 (9) | 1.00 / 1.00 / 0.89 (9) |
+
+    Reading: (1) **the new real data was learnt as voices, not as emotions**: WavLM similarity to the MEAD
+    test voices jumps 0.785 → 0.880 (and the old sources keep theirs), but fear on RAVDESS is 0 / 8 in every
+    run and 0.44 on MEAD's own held-out voices, where the real takes classify as fear 100 %; surprise moves
+    0.00 → 0.17 and 0.50 → 0.60. (2) **The model does not copy the reference's emotion**: on cross-emotion
+    items the output matches the reference emotion only 5–17 % of the time (cue 48–65 %), so the failure is
+    not the in-context conditioning winning over the text. RAVDESS "fearful, trembling" comes out *sad* in
+    7 of 8 items whatever the reference (fearful, calm or sad) — the model's rendering of the fear cue is a
+    low-arousal, shaky voice, which e2v files under sad; MEAD's fear takes may be the same register.
+    (3) **The model copies recording quality from the reference**: MOS on MEAD items drops 3.76 → 3.50 and on
+    CREMA-D 3.73 → 3.01 after training on those corpora (real MOS 2.76 and 1.52: 22 kHz lab takes with
+    reverb, 16 kHz noisy studio) — faithful cloning of bad microphones. UTMOS on the old sources is flat.
+    (4) CREMA-D adds nothing on disgust (RAVDESS 0.43 → 0.14 at n = 7, cremad 0 / 2), its only purpose;
+    fear on the CREMA-D voice goes 0 → 0.29 (n = 7). Not worth the MOS cost at this size (0.33 h of disgust).
+    **Decision: ship `lora-v3`** (`/data/runs/lora-v3/lora_step_02520.safetensors`) — same emotion accuracy as
+    lora-v4, +0.10 WavLM on new real voices, MOS 3.67 (−0.07 vs lora-v2, the price of MEAD's room); lora-v2
+    stays the choice where MOS matters more than voice coverage. Open: fear / surprise / disgust need more
+    than 1 epoch at lr 5e-5 with those cues at ~10 % of the pairs — oversample the under-delivered emotions
+    (or weight their loss), train 2–3 epochs, and filter MEAD / CREMA-D targets by e2v agreement (the
+    same filter the crowd votes gave CREMA-D) so the model does not learn fear that even the classifier
+    cannot hear. A reference-quality fix (bandwidth / denoise the reference, or condition MOS) would recover
+    the MOS loss on low-fidelity corpora.
   - **Inference bundle for smaller machines** (`scripts/inference_bundle.sh`, `docs/setup.md` §9):
     extracted audio DiT + Gemma text encoder + audio VAE + duration head (~36 GB, no 42 GB dev transformer)
     and `runs-lora-v1.tar.zst` (LoRA steps 3500 + 5034, config, log, the three eval runs with wavs).
