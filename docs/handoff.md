@@ -73,7 +73,10 @@ a flipped bit shows as a loss spike / NaN in training or one bad cache file.
   `lora-v2` (`lora_step_05034`) is the alternative where MOS matters more than voice coverage (3.74, but
   0.785 on the MEAD voices). lora-v4 (+ CREMA-D) and full-v2 are kept for reference, not shipped.
 - **What works**: voice cloning from a 10 s reference, reading the text, anger / joy / sadness / calm /
-  neutral cues. Continuation training (`--init-lora`) is non-destructive and matches from-scratch at a
+  neutral cues. The emotion is **not** copied from the reference (cross-emotion items follow the
+  reference's emotion 5–17 % of the time, the cue 48–65 %), which is the intended split: one reference per
+  speaker, ideally neutral and clean, gives the whole emotion palette — build demo voicebanks that way.
+  What *is* copied is the channel (microphone, room, bandwidth), see below. Continuation training (`--init-lora`) is non-destructive and matches from-scratch at a
   third of the compute.
 - **What does not** (the open problem): **fear, surprise, disgust cues are not delivered.** RAVDESS fear 0 / 8
   in every run (rendered as *sad*, whatever the reference's emotion), surprise 0.17, disgust 0.14–0.43;
@@ -126,19 +129,58 @@ rendered; rendering them is only useful with rejection sampling on emotion2vec.
      cache for the changed prompts only (`queen-cache --phase text`, cached by prompt hash).
    Measure on RAVDESS + the MEAD test voices with `queen-train eval … --per-source 50` then `queen-judge
    score … --manifest mix-v5`; the eval item set is seeded, so runs stay comparable.
-2. **Judge improvement**: A/B the Gemma judge with thinking mode (`enable_thinking=True` in
+2. **Relative cues: hold / raise / lower the reference's emotion** (user's direction, 2026-11-04). Target
+   model: the reference gives the voice regardless of its own emotion (done, §2), and the cue either sets
+   the emotion absolutely (done for 5 of 8 emotions) or **relative to the reference** — "steady, same tone
+   as the reference", "increasing anger", "calming down". This is also what long-form generation needs:
+   chunk i's output becomes chunk i+1's reference with a "steady" (or escalating) cue. Data without new
+   audio: MEAD's 3 intensity levels (same speaker, emotion, different level → up / down pairs), CREMA-D's
+   lo / md / hi, IEMOCAP's valence / arousal ratings on consecutive turns of one speaker; "steady" = the
+   existing same-emotion pairs and consecutive sentences within one LTX self-gen take or DramaBox render.
+   Build: new relations `steady` / `up` / `down` next to `same` / `cross` in the pair builder
+   (`queen/manifest.py`), cue templates for them on a fraction of pairs, text cache for the new prompts,
+   continue from the best absolute-cue adapter. Keep absolute cues in the same set and re-check that they
+   stay reference-independent (the cross-emotion "follows reference" rate in `docs/training.md` is the
+   metric). Measure intensity with a small probe on emotion2vec embeddings trained on MEAD's levels (or
+   pitch / energy statistics), and test chaining over ≥ 10 chunks for drift in voice (WavLM to the first
+   reference), emotion and channel — the model copies the reference's recording quality, and a chain
+   compounds that.
+3. **Judge improvement**: A/B the Gemma judge with thinking mode (`enable_thinking=True` in
    `apply_chat_template`, temperature 1.0 sampling as Google recommends, parse after the thought block —
    `queen/evaluator.py`), 50 items, both orders; keep it only if the positional rate drops well below 50 %.
    Otherwise rank on e2v accuracy + UTMOS and listening.
-3. **Reward-based training on the judge signal** (`docs/training.md`): offline best-of-N (generate N
+4. **Reward-based training on the judge signal** (`docs/training.md`): offline best-of-N (generate N
    seeds per training prompt, keep the e2v-best / UTMOS-best as targets) is the cheap one and reuses
    `queen-stage`; then Diffusion-DPO on the preference pairs; online GRPO last (flow-matching analogues:
    F5R-TTS, FlowTTS-GRPO; DiffRO / RRPO are for codec-token TTS).
-4. **Reference-quality robustness**: the model copies the microphone. Options: augment the reference
+5. **Reference-quality robustness**: the model copies the microphone. Options: augment the reference
    (bandwidth / noise) while keeping clean targets, or an explicit quality cue in the prompt.
-5. **Long targets (> 10 s)** and the **no-reference path** (`ref_dropout` is already 0.1, untested at
-   inference). Both are inference / eval work on the staged pipeline.
-6. Bookkeeping: file the USC IEMOCAP release form; `install.sh restore` checks mix-v5 now.
+6. **Long form by chained generation** (user's direction, 2026-11-05): generate a long script chunk by chunk,
+   each chunk's output becoming the next chunk's reference, with a relative cue (item 2) and a **speaker-state
+   summary in the prompt**. Order of work:
+   - *Chaining mechanics from data we own*: LTX self-gen takes and DramaBox renders are one speaker, one
+     channel, script-aligned into sentences (`/data/selfgen/ltxself-v1`, `/data/dramabox/dd-v1`, take ids in
+     the segment tables) → pairs ref = segment i, target = segment i+1 with a "steady / continuing" cue. Self-gen
+     takes are model output, so the reference is the model's own speech, as it will be at inference — no
+     exposure-bias gap. Eval: chains of ≥ 10 chunks, WavLM to the first reference, e2v trajectory, UTMOS per
+     chunk (channel drift compounds; the model copies the reference's recording quality).
+   - *Natural long-form speech* for drift, pauses, emphasis and fatigue over minutes: candidates, **licences
+     unchecked as of 2026-11-05**, verify before download — VoxPopuli (European Parliament, said to be CC0,
+     16 kHz = our latent rate), LibriVox audiobooks (public domain, read rather than spoken), People's Speech
+     CC-BY subset. TED and most lecture sets (MIT OCW, Yale) are CC BY-NC-**ND/SA**: out, like RAVDESS.
+     Speeches are mostly assertive-to-calm: they teach continuity, not the missing emotions. Per-segment cues
+     are a judge pass: Whisper transcript, emotion2vec label, and Gemma 4 12B-it (audio in) describing the
+     delivery in words; the llama.cpp director (`docs/directions.md`) turns the transcript side into cues.
+   - *Speaker-state summary*: a short line in the prompt ("so far: calm lecture tone, tiring, speeding up;
+     now: rising emphasis"). Cheap: the prompt is 1024 tokens and we use a short descriptor; it caches per
+     prompt like any other (re-cache the affected subset at 2.7 prompts/s). Training: derive it from the
+     preceding segments' cues. Inference: the instruct Gemma on llama.cpp updates it from the script and the
+     previous cue, as the director does today — the DiT's text encoder is the frozen Gemma that *embeds*
+     the prompt, the summary is *written* by the instruct model. Constrain it to a few fields with fixed
+     vocabularies (like the director's emotion enum) so it cannot wander over a long chain.
+   - Also still open: targets > 10 s in one shot (latent length is the only limit; untested past ~12 s) and
+     the **no-reference path** (`ref_dropout` is 0.1 in training, untested at inference).
+7. Bookkeeping: file the USC IEMOCAP release form; `install.sh restore` checks mix-v5 now.
 
 Compute: a LoRA epoch on mix-v5 is ~3 h on the g7e at 4.3 samples/s; expect ~2× that on a g7 (RTX PRO
 4500, 32 GB — set `--gradient-checkpointing true` if the 12 s targets do not fit, peak was 13.8 GB without

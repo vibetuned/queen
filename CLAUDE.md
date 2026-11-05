@@ -205,9 +205,11 @@ ranges instead (13 s, 0.7 GB RSS).
 - Next: pack + upload `manifests-mix-v5` (mix-v3/v4/v5 caches hardlinked) and `runs-*` (lora-v3, lora-v4, full-v2,
   judge json) with `scripts/archive_data.sh`, add lora-v3 to `KEEP_STEPS` in `scripts/inference_bundle.sh` and
   re-pack the bundle, then stop the g7e and continue on a g7 / the RTX 5090 box. Then: oversample / loss-weight
-  fear, surprise, disgust and train 2–3 epochs; filter MEAD / CREMA-D targets by e2v agreement; Gemma judge with
-  thinking mode (A/B on the positional rate); offline best-of-N / Diffusion-DPO on e2v + MOS; long targets
-  (> 10 s) and the no-reference path; reference-quality robustness. `docs/handoff.md` (rewritten 2026-11-04) is the handoff
+  fear, surprise, disgust and train 2–3 epochs; relative cues (steady / increasing / decreasing vs the reference,
+  from MEAD / CREMA-D intensity levels; the basis for autoregressive long form — handoff §4.2); filter MEAD / CREMA-D targets by e2v agreement; Gemma judge with
+  thinking mode (A/B on the positional rate); offline best-of-N / Diffusion-DPO on e2v + MOS; long form by chained
+  generation (self-gen / DramaBox takes as chained pairs, then public long-form speech — licences to check — with
+  per-segment judge-derived cues and a speaker-state summary in the prompt; handoff §4.6) and the no-reference path; reference-quality robustness. `docs/handoff.md` (rewritten 2026-11-04) is the handoff
   for the next box: restore, state, ordered experiments.
 
 ## Data licensing constraints (checked 2026-10-30)
